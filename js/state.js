@@ -1,213 +1,89 @@
-// Globaler Spielzustand + Initialisierung + Speichern/Laden.
+// Globaler Match-Zustand. Kein Liga/Transfer-Kram mehr.
+// Eine Instanz fuer eine laufende Partie; bei "Neue Partie" wird alles geresettet.
 
-import {
-  LEAGUES, TEAMS_PER_LEAGUE, BOARDS_PER_TEAM, SEASON_ROUNDS,
-  makeRng, gauss, randName, randClubName
-} from "./data.js";
+import { CONFIG } from "./config.js";
 
-export const STORAGE_KEY = "checkmate-league-save-v1";
+export const STORAGE_KEY = "checkmate-league-match-v2";
 
-// --------- Helpers ---------
-function clamp(v, mn, mx) { return v < mn ? mn : v > mx ? mx : v; }
-export function uid(rng) { return Math.floor(rng() * 1e9).toString(36); }
-
-// Runde Elo so, dass es weniger Dezimalstellen gibt.
-function round5(v) { return Math.round(v / 5) * 5; }
-
-// --------- Player / Team Generation ---------
-export function makePlayer(rng, leagueId, opts = {}) {
-  const L = LEAGUES[leagueId];
-  const rating = round5(clamp(gauss(rng, L.ratingMean, L.ratingSd), 800, 2850));
-  const age = clamp(Math.round(gauss(rng, 28, 7)), 16, 55);
-  const potential = clamp(rating + Math.round(gauss(rng, 100, 80)) + Math.max(0, 30 - age) * 15, rating, 2900);
-  const style = ["aggressive", "balanced", "defensive"][Math.floor(rng() * 3)];
-  const baseWage = Math.round((rating - 800) ** 1.6 * 0.05 + 500);
+export function createInitialState() {
   return {
-    id: uid(rng),
-    name: opts.name ?? randName(rng),
-    rating,
-    potential,
-    age,
-    style,
-    form: 60 + Math.round(rng() * 30),
-    stamina: 100,
-    morale: 70,
-    yellow: 0,      // Taktik-Foul-Karten
-    banned: 0,      // Sperren in Spielen
-    injury: 0,      // Spiele verletzt
-    wage: baseWage,
-    contractYears: 1 + Math.floor(rng() * 3),
-    games: 0,
-    wins: 0, draws: 0, losses: 0,
+    version: 2,
+    phase: "pregame",       // "pregame" | "playing" | "finished"
+    result: null,           // { outcome: "win"|"loss"|"draw"|"dq", reason: string } bei phase "finished"
+    speed: 1,               // 0 | 1 | 4 | 16
+
+    // Ressourcen / Heat
+    resources: CONFIG.startResources,
+    heat: CONFIG.startHeat,
+
+    // Buffs auf beiden Seiten. Jeder Eintrag:
+    // { id, source, selfSkillDelta, opponentSkillDelta, remaining (eigene Zuege), label }
+    buffs: [],
+
+    // Cast-Historie fuer "oncePerGame"-Checks
+    castLog: {},            // { [interventionId]: count }
+
+    // Schachzustand
+    fen: "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+    movesSan: [],           // full SAN list
+    movesUci: [],           // full UCI list (fuer "position fen ... moves ..." waere moeglich)
+    fullMoveNumber: 1,      // 1-basiert
+    myMovesMade: 0,         // wie viele Zuege mein Spieler schon gemacht hat
+    lastMove: null,         // { from, to, san, color }
+
+    // Log-Eintraege fuer UI ("Narration")
+    log: [],
+
+    // RNG-Seed fuer deterministische "Entdeckung"-Rolls (optional, rein zufaellig ok)
+    _seed: Math.floor(Math.random() * 1e9),
   };
 }
 
-export function makeTeam(rng, leagueId, id, name) {
-  const players = [];
-  for (let i = 0; i < BOARDS_PER_TEAM + 3; i++) {  // 8 Spieler pro Kader
-    players.push(makePlayer(rng, leagueId));
-  }
-  // Sortiere nach Rating fuer Default-Aufstellung
-  players.sort((a, b) => b.rating - a.rating);
-  const lineup = players.slice(0, BOARDS_PER_TEAM).map(p => p.id);
-  return {
-    id, name,
-    leagueId,
-    players,
-    lineup,               // Spieler-IDs Brett 1..BOARDS_PER_TEAM
-    tactic: "balanced",   // Mannschaftstaktik: aggressive|balanced|defensive
-    cash: 0,
-    stadium: 1,
-    fans: 500 + Math.floor(rng() * 2000),
-    seasonStats: newSeasonStats(),
-    history: [],
-    isPlayer: false,
-  };
-}
-
-function newSeasonStats() {
-  return { played: 0, w: 0, d: 0, l: 0, bp: 0, bpAgainst: 0, pts: 0 };
-}
-
-// --------- League & Schedule ---------
-export function generateSchedule(teamIds, rng) {
-  // Round-Robin (Berger-Tabellen) Doppelrunde
-  const n = teamIds.length;
-  if (n % 2 !== 0) throw new Error("even teams required");
-  const rounds = [];
-  const list = [...teamIds];
-  const half = n / 2;
-  for (let r = 0; r < n - 1; r++) {
-    const pairings = [];
-    for (let i = 0; i < half; i++) {
-      const a = list[i], b = list[n - 1 - i];
-      // abwechselnd Heim/Auswaerts
-      if (r % 2 === 0) pairings.push([a, b]);
-      else pairings.push([b, a]);
-    }
-    rounds.push(pairings);
-    // Rotation (list[0] fix)
-    list.splice(1, 0, list.pop());
-  }
-  // Rueckrunde mit getauschtem Heimrecht
-  const second = rounds.map(r => r.map(([a,b]) => [b, a]));
-  return rounds.concat(second);
-}
-
-// --------- World Gen ---------
-export function createNewGame(opts) {
-  const seed = opts.seed ?? Math.floor(Math.random() * 1e9);
-  const rng = makeRng(seed);
-  const usedClubs = new Set();
-  const leagues = LEAGUES.map(l => ({ ...l, teamIds: [], schedule: [], round: 0 }));
-  const teams = {};
-
-  let tid = 1;
-  for (let L = 0; L < LEAGUES.length; L++) {
-    const ids = [];
-    for (let t = 0; t < TEAMS_PER_LEAGUE; t++) {
-      const name = randClubName(rng, usedClubs);
-      const id = "t" + tid++;
-      teams[id] = makeTeam(rng, L, id, name);
-      ids.push(id);
-    }
-    leagues[L].teamIds = ids;
-    leagues[L].schedule = generateSchedule(ids, rng);
-  }
-
-  // Spieler-Team markieren
-  const playerLeagueId = opts.startLeague ?? 3;
-  const playerTeamIds = leagues[playerLeagueId].teamIds;
-  let myTeamId;
-  if (opts.pickedTeamId) myTeamId = opts.pickedTeamId;
-  else myTeamId = playerTeamIds[playerTeamIds.length - 1]; // letzter aus Liste
-
-  const myTeam = teams[myTeamId];
-  if (opts.clubName) myTeam.name = opts.clubName;
-  myTeam.isPlayer = true;
-  myTeam.cash = 500000;
-  myTeam.manager = opts.managerName ?? "Manager";
-
-  // Transfermarkt: freie Spieler-Pool
-  const freeAgents = [];
-  for (let L = 0; L < LEAGUES.length; L++) {
-    for (let i = 0; i < 6; i++) {
-      const p = makePlayer(rng, L);
-      p.contractYears = 0;
-      freeAgents.push(p);
-    }
-  }
-
-  const state = {
-    seed,
-    version: 1,
-    day: 1,
-    year: 2026,
-    speed: 1,
-    leagues,
-    teams,
-    myTeamId,
-    freeAgents,
-    news: [],
-    lastMatch: null,
-    pendingMatchday: 0,       // naechste Runde zu spielen
-    seasonState: "inplay",    // inplay | offseason
-    transferWindow: false,
-    matchHistory: [],
-    achievements: {},
-    transferWindow: true,
-    view: "dashboard",
-  };
-
-  log(state, `Ein neuer Manager uebernimmt ${myTeam.name}. Willkommen in der ${LEAGUES[playerLeagueId].name}!`, "ok");
-  log(state, `Saison ${state.year} beginnt. ${SEASON_ROUNDS} Spieltage liegen vor uns.`);
-
-  return state;
-}
-
-// --------- News ---------
+// --------- Logging ---------
 export function log(state, text, kind = "info") {
-  state.news.unshift({ id: Date.now() + Math.random(), day: state.day, year: state.year, text, kind });
-  if (state.news.length > 120) state.news.pop();
+  state.log.unshift({
+    id: Date.now() + Math.random(),
+    move: state.myMovesMade,
+    text, kind,
+  });
+  if (state.log.length > 60) state.log.pop();
 }
 
-// --------- Save/Load ---------
-export function saveGame(state) {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-    return true;
-  } catch (e) { console.error(e); return false; }
+// --------- Save/Load (optional) ---------
+export function saveState(state) {
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch {}
 }
-
-export function loadGame() {
+export function loadState() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return null;
-    return JSON.parse(raw);
-  } catch (e) { return null; }
+    const parsed = JSON.parse(raw);
+    if (!parsed || parsed.version !== 2) return null;
+    return parsed;
+  } catch { return null; }
+}
+export function deleteSave() { try { localStorage.removeItem(STORAGE_KEY); } catch {} }
+
+// --------- Derived Skill ---------
+// Effektiver Skill beider Seiten nach Buffs. Clamped auf [0, 20].
+export function effectiveSkills(state) {
+  let self = CONFIG.startSkillPlayer;
+  let opp = CONFIG.startSkillOpponent;
+  for (const b of state.buffs) {
+    self += b.selfSkillDelta || 0;
+    opp += b.opponentSkillDelta || 0;
+  }
+  const clamp = (v) => Math.max(CONFIG.skillMin, Math.min(CONFIG.skillMax, v));
+  return { self: clamp(self), opponent: clamp(opp) };
 }
 
-export function hasSave() { return !!localStorage.getItem(STORAGE_KEY); }
-
-export function deleteSave() { localStorage.removeItem(STORAGE_KEY); }
-
-// --------- Access Helpers ---------
-export function getMyTeam(state) { return state.teams[state.myTeamId]; }
-export function getLeague(state, leagueId) { return state.leagues[leagueId]; }
-export function getPlayer(team, pid) { return team.players.find(p => p.id === pid); }
-export function teamAvgRating(team, onlyLineup = false) {
-  const pool = onlyLineup ? team.lineup.map(id => getPlayer(team, id)).filter(Boolean) : team.players;
-  if (!pool.length) return 0;
-  return Math.round(pool.reduce((s, p) => s + p.rating, 0) / pool.length);
-}
-export function marketValue(p) {
-  // exponentielle Kurve ab 1000 Rating, Bonus fuer Potential-Luft und junges Alter
-  const base = Math.max(0, p.rating - 1000);
-  let v = Math.pow(base, 2.05) * 2.4;
-  if (p.age < 23) v *= 1.4;
-  if (p.age > 33) v *= 0.55;
-  if (p.age > 40) v *= 0.25;
-  const potGap = Math.max(0, (p.potential ?? p.rating) - p.rating);
-  v *= (1 + potGap / 400);
-  return Math.round(v / 1000) * 1000;
+// Nur aktive Buffs verbleiben; tickt Dauer nach einem eigenen Zug.
+export function decrementBuffsAfterOwnMove(state) {
+  const kept = [];
+  for (const b of state.buffs) {
+    const rem = (b.remaining ?? 0) - 1;
+    if (rem > 0) kept.push({ ...b, remaining: rem });
+    else log(state, `${b.label} läuft aus.`, "dim");
+  }
+  state.buffs = kept;
 }

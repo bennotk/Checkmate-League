@@ -3,26 +3,26 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Checkmate League</title>
+<title>Checkmate League — Manager Prototyp</title>
 <link rel="stylesheet" href="css/main.css" />
 </head>
-<body>
+<body class="retro">
 <div id="app">
   <header class="topbar">
     <div class="brand">
       <span class="logo">&#9812;</span>
-      <h1>Checkmate League</h1>
+      <h1>CHECKMATE LEAGUE</h1>
     </div>
-    <nav id="mainNav" class="nav" aria-label="Hauptnavigation"></nav>
+    <nav id="mainNav" class="nav" aria-label="Status"></nav>
     <div class="status">
       <span id="statClub">&mdash;</span>
       <span id="statMoney">&mdash;</span>
       <span id="statDate">&mdash;</span>
-      <div class="clock">
+      <div class="clock" aria-label="Geschwindigkeit">
         <button class="pill" data-speed="0" title="Pause">&#10074;&#10074;</button>
-        <button class="pill is-active" data-speed="1" title="Normal">&#9654;</button>
-        <button class="pill" data-speed="4" title="Schnell">&#9654;&#9654;</button>
-        <button class="pill" data-speed="16" title="Turbo">&#9654;&#9654;&#9654;</button>
+        <button class="pill is-active" data-speed="1" title="1&times; Normal">&#9654;</button>
+        <button class="pill" data-speed="4" title="4&times; Schnell">&#9654;&#9654;</button>
+        <button class="pill" data-speed="16" title="16&times; Turbo">&#9654;&#9654;&#9654;</button>
       </div>
     </div>
   </header>
@@ -34,31 +34,34 @@
   <div id="modal" class="modal is-hidden" role="dialog" aria-modal="true">
     <div class="modal-backdrop" data-modal-close></div>
     <div class="modal-body">
-      <button class="modal-close" data-modal-close aria-label="Schlie&szlig;en">&times;</button>
+      <button class="modal-close" data-modal-close aria-label="Schliessen">&times;</button>
       <div id="modalContent"></div>
     </div>
   </div>
 </div>
 
-<!-- Startbildschirm wird in JS gerendert. Spiel l&auml;dt chess.js von CDN. -->
+<!-- chess.js ueber jsdelivr ESM. Stockfish laedt lokal aus vendor/. -->
 <script type="module">
-  // chess.js v1 ESM-Build ueber jsdelivr; global verfuegbar machen.
-  try {
-    const mod = await import('https://cdn.jsdelivr.net/npm/chess.js@1.0.0-beta.8/+esm');
-    window.Chess = mod.Chess;
-  } catch (e) {
-    console.warn('chess.js via CDN fehlgeschlagen, lade Fallback', e);
+  const candidates = [
+    "https://cdn.jsdelivr.net/npm/chess.js@1.0.0-beta.8/+esm",
+    "https://esm.sh/chess.js@1.0.0-beta.8",
+  ];
+  let loaded = false;
+  for (const url of candidates) {
     try {
-      const mod2 = await import('https://esm.sh/chess.js@1.0.0-beta.8');
-      window.Chess = mod2.Chess;
-    } catch (e2) {
-      console.error('chess.js konnte nicht geladen werden', e2);
-      document.getElementById('view').innerHTML =
-        '<div class="panel"><h2>Offline?</h2><p>Das Spiel benötigt eine einmalige Verbindung zu cdn.jsdelivr.net oder esm.sh, um die Schachregel-Bibliothek zu laden. Bitte Seite mit Internet erneut laden.</p></div>';
+      const mod = await import(url);
+      window.Chess = mod.Chess ?? mod.default?.Chess ?? mod.default;
+      if (window.Chess) { loaded = true; break; }
+    } catch (e) {
+      console.warn("chess.js Laden fehlgeschlagen:", url, e);
     }
   }
-  // Nach chess.js laden wir unsere Module.
-  await import('./js/main.js');
+  if (!loaded) {
+    document.getElementById("view").innerHTML =
+      '<div class="term"><h1>Offline?</h1><p>Die Schachregel-Bibliothek <code>chess.js</code> konnte nicht geladen werden. Bitte Seite mit aktiver Internetverbindung neu laden.</p></div>';
+  } else {
+    await import("./js/main.js");
+  }
 </script>
 </body>
 </html>

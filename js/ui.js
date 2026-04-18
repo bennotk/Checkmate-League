@@ -1,514 +1,280 @@
-// UI-Rendering: alle Views als Strings, einfache Event-Delegation.
-// DOM-Updates minimalistisch; bei View-Wechsel wird #view komplett neu gerendert.
+// Reines UI-Rendering. Kein Schach-Logik-Zugriff ausser ueber match.js oder state.js.
+//
+// Rendering-Strategie: grobe Layouts per innerHTML, fuer Live-Updates greifen wir
+// gezielt auf einzelne Knoten zu, damit Klicks nicht den Kontext verlieren.
 
-import { BOARDS_PER_TEAM, LEAGUES, SEASON_ROUNDS } from "./data.js";
-import {
-  getMyTeam, getLeague, getPlayer, teamAvgRating, log, marketValue,
-  saveGame, deleteSave
-} from "./state.js";
-import { leagueStandings, getFixturesForRound } from "./season.js";
-import { listMarket, tryBuy, trySell, scout, askingPrice } from "./transfer.js";
+import { CONFIG } from "./config.js";
+import { effectiveSkills } from "./state.js";
+import { canCast } from "./interventions.js";
+import { getChess } from "./match.js";
 
-// --------- util ---------
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
-const euro = (n) => new Intl.NumberFormat("de-DE", { style: "currency", currency: "EUR", maximumFractionDigits: 0 }).format(n);
-const esc = (s) => String(s ?? "").replace(/[&<>"']/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;" }[c]));
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({
+  "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"
+}[c]));
 
 export function toast(text, kind = "ok") {
-  const box = document.createElement("div");
-  box.className = `toast ${kind}`;
-  box.textContent = text;
-  $("#toasts").appendChild(box);
-  setTimeout(() => box.remove(), 4200);
+  const el = document.createElement("div");
+  el.className = `toast ${kind}`;
+  el.textContent = text;
+  $("#toasts").appendChild(el);
+  setTimeout(() => el.remove(), 3500);
 }
 
 export function openModal(html) {
   $("#modalContent").innerHTML = html;
   $("#modal").classList.remove("is-hidden");
 }
-export function closeModal() { $("#modal").classList.add("is-hidden"); $("#modalContent").innerHTML = ""; }
+export function closeModal() {
+  $("#modal").classList.add("is-hidden");
+  $("#modalContent").innerHTML = "";
+}
 
-// --------- Top bar ---------
+// ---- Topbar ----
 export function renderTopbar(state) {
-  const me = getMyTeam(state);
-  $("#statClub").textContent = me ? me.name : "—";
-  $("#statMoney").textContent = me ? euro(me.cash) : "—";
-  $("#statDate").textContent = state ? `Saison ${state.year} · Spieltag ${Math.min(state.pendingMatchday + 1, SEASON_ROUNDS)}/${SEASON_ROUNDS}` : "—";
-  // Speed pills
-  $$("#app .clock .pill").forEach(btn => {
+  const phase = state?.phase ?? "pregame";
+  const title = phase === "playing" ? `PARTIE LÄUFT · Zug ${state.myMovesMade + (phase === "playing" && state.lastMove?.color === "w" ? 0 : 0)}`
+              : phase === "finished" ? "PARTIE BEENDET"
+              : "CHECKMATE LEAGUE";
+  $("#statClub").textContent = title;
+  $("#statMoney").textContent = phase === "playing" ? `R:${state.resources} · H:${state.heat}` : "";
+  $("#statDate").textContent = "";
+  $$("#app .clock .pill").forEach((btn) => {
     btn.classList.toggle("is-active", Number(btn.dataset.speed) === (state?.speed ?? 1));
+    // Clock nur im Live-Match sinnvoll
+    btn.disabled = phase !== "playing";
   });
-  // Nav
   const nav = $("#mainNav");
-  const active = state?.view ?? "dashboard";
-  const items = [
-    ["dashboard", "Übersicht"],
-    ["squad", "Kader"],
-    ["match", "Spieltag"],
-    ["league", "Tabelle"],
-    ["transfers", "Transfers"],
-    ["news", "Nachrichten"],
-  ];
-  nav.innerHTML = items.map(([id, label]) =>
-    `<button data-view="${id}" class="${active === id ? "is-active" : ""}">${label}</button>`
-  ).join("");
+  nav.innerHTML = `<span class="term-prompt">checkmate@manager:~$ <span class="blink">_</span></span>`;
 }
 
-// --------- Dashboard ---------
-export function renderDashboard(state) {
-  const me = getMyTeam(state);
-  const L = getLeague(state, me.leagueId);
-  const standings = leagueStandings(state, me.leagueId);
-  const pos = standings.findIndex(t => t.id === me.id) + 1;
-  const upcomingRound = state.pendingMatchday;
-  const pair = L.schedule[upcomingRound]?.find(p => p.includes(me.id));
-  const opp = pair ? state.teams[pair[0] === me.id ? pair[1] : pair[0]] : null;
-  const isHome = pair && pair[0] === me.id;
-
-  const recentNews = state.news.slice(0, 6).map(n =>
-    `<div class="news-item"><span class="t">S${n.year} T${n.day}</span>${esc(n.text)}</div>`
-  ).join("") || `<div class="small dim">Noch keine Nachrichten.</div>`;
-
+// ---- Pre-Game ----
+export function renderPreGame() {
   $("#view").innerHTML = `
-  <div class="grid two-thirds">
-    <div class="panel">
-      <div class="spread">
-        <div>
-          <h2>${esc(me.name)} <span class="small dim">${esc(L.name)}</span></h2>
-          <div class="small">Manager: <span class="hl">${esc(me.manager ?? "Manager")}</span> · Tabellenplatz: <b>${pos}</b>/${L.teamIds.length}</div>
-        </div>
-        <div class="row">
-          <span class="tag">Ø Elo ${teamAvgRating(me, true)}</span>
-          <span class="tag">Kader ${me.players.length}</span>
-          <span class="tag">Taktik: ${tacticName(me.tactic)}</span>
-        </div>
+    <div class="term">
+      <h1>♛ CHECKMATE LEAGUE</h1>
+      <div class="dim">&gt; loading manager protocol v2.0 ...</div>
+      <div class="dim">&gt; subject: single match, first prototype</div>
+      <div class="hr"></div>
+      <p>Du bist nicht der Schachspieler. Du bist sein <span class="hl">Manager</span>.</p>
+      <p>Dein Spieler sitzt am Brett. Du sitzt im Publikum und beeinflusst die Partie indirekt.</p>
+      <div class="kv">
+        <div>Mein Spieler (Weiß)</div><div>Skill ${CONFIG.startSkillPlayer}/20</div>
+        <div>Gegner (Schwarz)</div><div>Skill ${CONFIG.startSkillOpponent}/20</div>
+        <div>Ressourcen</div><div>${CONFIG.startResources}</div>
+        <div>Heat-Limit</div><div>${CONFIG.heatMax}</div>
       </div>
       <div class="hr"></div>
-      <div class="grid cols-3">
-        <div>
-          <h3>Nächstes Spiel</h3>
-          ${opp ? `
-            <div class="spread">
-              <div>
-                <div><b>${esc(me.name)}</b> ${isHome ? "(H)" : "(A)"} vs ${esc(opp.name)}</div>
-                <div class="small dim">Runde ${upcomingRound + 1} · Ø Elo Gegner ${teamAvgRating(opp, true)}</div>
-              </div>
-              <button class="btn primary" data-action="goto-match">Zum Spieltag</button>
-            </div>
-          ` : `<div class="small dim">Keine Partie geplant.</div>`}
-        </div>
-        <div>
-          <h3>Finanzen</h3>
-          <div>Kasse: <b>${euro(me.cash)}</b></div>
-          <div class="small">Wöchentliche Gehälter: ${euro(me.players.reduce((s,p)=>s+(p.wage||0),0))}</div>
-          <div class="small">Fans: ${me.fans.toLocaleString("de-DE")}</div>
-        </div>
-        <div>
-          <h3>Aktionen</h3>
-          <div class="row">
-            <button class="btn" data-action="save">Speichern</button>
-            <button class="btn danger" data-action="reset" title="Komplett neu starten">Neu beginnen</button>
-          </div>
-        </div>
-      </div>
-    </div>
-    <div class="panel">
-      <h2>Nachrichten</h2>
-      ${recentNews}
+      <ul class="term-list">
+        <li>Ressourcen sind knapp — jede Intervention kostet.</li>
+        <li>Heat steigt bei jedem Eingriff. Bei ${CONFIG.heatMax} wirst du disqualifiziert.</li>
+        <li>Ab Zug ${CONFIG.drawEarliestMove} kannst du ein Remis anbieten.</li>
+      </ul>
       <div class="hr"></div>
-      <button class="btn ghost" data-action="goto-news">Alle Nachrichten</button>
-    </div>
-  </div>
-  <div class="grid cols-2" style="margin-top:14px;">
-    <div class="panel">
-      <h2>Top der ${esc(L.name)}</h2>
-      ${renderStandingsTable(state, me.leagueId, 5)}
-    </div>
-    <div class="panel">
-      <h2>Eure Top-Bretter</h2>
-      <table class="ct">
-        <thead><tr><th>#</th><th>Name</th><th class="num">Elo</th><th class="num">Form</th><th class="num">Kraft</th><th>Status</th></tr></thead>
-        <tbody>
-          ${me.lineup.slice(0, BOARDS_PER_TEAM).map((pid, i) => {
-            const p = getPlayer(me, pid); if (!p) return "";
-            return `<tr>
-              <td class="hl">${i+1}</td>
-              <td>${esc(p.name)}</td>
-              <td class="num">${p.rating}</td>
-              <td class="num">${bar(p.form)}</td>
-              <td class="num">${bar(p.stamina)}</td>
-              <td>${playerStatusTags(p)}</td>
-            </tr>`;
-          }).join("")}
-        </tbody>
-      </table>
-    </div>
-  </div>
-  `;
-}
-
-function tacticName(t) {
-  return t === "aggressive" ? "Angriff" : t === "defensive" ? "Verteidigung" : "Ausgewogen";
-}
-
-function bar(v) {
-  const pct = Math.max(0, Math.min(100, v));
-  return `<span class="bar"><i style="width:${pct}%"></i></span> <span class="small">${Math.round(pct)}</span>`;
-}
-
-function playerStatusTags(p) {
-  const tags = [];
-  if (p.injury > 0) tags.push(`<span class="tag bad">verletzt ${p.injury}</span>`);
-  if (p.banned > 0) tags.push(`<span class="tag bad">gesperrt ${p.banned}</span>`);
-  if (p.yellow > 0) tags.push(`<span class="tag warn">${p.yellow}× gelb</span>`);
-  if (!tags.length) tags.push(`<span class="tag ok">fit</span>`);
-  return tags.join(" ");
-}
-
-// --------- Standings ---------
-export function renderStandingsTable(state, leagueId, limit = null) {
-  const standings = leagueStandings(state, leagueId);
-  const rows = standings.slice(0, limit ?? standings.length).map((t, i) => {
-    const s = t.seasonStats;
-    return `<tr class="${t.isPlayer ? "me" : ""}">
-      <td>${i+1}</td>
-      <td>${esc(t.name)}</td>
-      <td class="num">${s.played}</td>
-      <td class="num">${s.w}-${s.d}-${s.l}</td>
-      <td class="num">${s.bp.toFixed(1)}:${s.bpAgainst.toFixed(1)}</td>
-      <td class="num"><b>${s.pts}</b></td>
-    </tr>`;
-  }).join("");
-  return `<table class="ct">
-    <thead><tr><th>#</th><th>Verein</th><th class="num">Sp</th><th class="num">S-U-N</th><th class="num">Brettpunkte</th><th class="num">Pkt</th></tr></thead>
-    <tbody>${rows}</tbody>
-  </table>`;
-}
-
-export function renderLeagueView(state) {
-  const me = getMyTeam(state);
-  const tabs = state.leagues.map(L =>
-    `<button class="btn ${state.leagueTab === L.id ? "primary" : ""}" data-league-tab="${L.id}">${esc(L.name)}</button>`
-  ).join(" ");
-  const activeLeague = state.leagueTab ?? me.leagueId;
-  $("#view").innerHTML = `
-    <div class="panel">
-      <div class="row">${tabs}</div>
-      <div class="hr"></div>
-      ${renderStandingsTable(state, activeLeague)}
-      <div class="hr"></div>
-      <h3>Paarungen nächste Runde (${(state.pendingMatchday ?? 0) + 1}/${SEASON_ROUNDS})</h3>
-      ${renderFixturesForLeague(state, activeLeague)}
+      <button class="btn primary" data-action="start-match">[ START MATCH ]</button>
+      <span class="dim small">&nbsp;&nbsp;(lädt Stockfish-Engine beim ersten Klick; kann einen Moment dauern)</span>
     </div>`;
 }
 
-function renderFixturesForLeague(state, leagueId) {
-  const L = state.leagues[leagueId];
-  const round = state.pendingMatchday ?? 0;
-  const pairs = L.schedule[round] || [];
-  if (!pairs.length) return `<div class="small dim">Keine weiteren Spiele diese Saison.</div>`;
-  return `<table class="ct"><tbody>${pairs.map(([h,a]) => {
-    const ht = state.teams[h], at = state.teams[a];
-    return `<tr><td>${esc(ht.name)}</td><td class="num">vs</td><td>${esc(at.name)}</td></tr>`;
-  }).join("")}</tbody></table>`;
-}
-
-// --------- Squad ---------
-export function renderSquadView(state) {
-  const me = getMyTeam(state);
-  const lineupIds = me.lineup.slice(0, BOARDS_PER_TEAM);
-  const reserves = me.players.filter(p => !lineupIds.includes(p.id));
+// ---- Live Match ----
+export function renderLiveMatch(state) {
+  const skills = effectiveSkills(state);
+  const heatPct = Math.min(100, state.heat);
+  const heatCls = state.heat >= CONFIG.heatMax ? "bad" : state.heat >= CONFIG.heatWarnThreshold ? "warn" : "ok";
 
   $("#view").innerHTML = `
-  <div class="grid cols-2">
-    <div class="panel">
-      <div class="spread">
-        <h2>Aufstellung</h2>
-        <div class="row">
-          <label class="small dim">Mannschaftstaktik</label>
-          <select data-action="set-tactic">
-            <option value="aggressive" ${me.tactic==="aggressive"?"selected":""}>Angriff</option>
-            <option value="balanced" ${me.tactic==="balanced"?"selected":""}>Ausgewogen</option>
-            <option value="defensive" ${me.tactic==="defensive"?"selected":""}>Verteidigung</option>
-          </select>
+    <div class="match-grid">
+      <section class="panel player-panel">
+        <h3>MEIN SPIELER · Weiß</h3>
+        <div class="stat"><span>Skill</span><b id="pnSkill">${skills.self}</b><span class="small dim">/20</span></div>
+        <div class="stat"><span>Ressourcen</span><b id="pnRes">${state.resources}</b></div>
+        <div class="stat"><span>Heat</span><b id="pnHeat" class="${heatCls}">${state.heat}</b></div>
+        <div class="meter"><i id="pnHeatBar" class="${heatCls}" style="width:${heatPct}%"></i></div>
+        <div class="hr"></div>
+        <h3>AKTIVE EINGRIFFE</h3>
+        <div id="pnBuffs">${renderBuffs(state)}</div>
+      </section>
+
+      <section class="board-panel">
+        <div class="match-head">
+          <span class="dim small">Zug ${state.myMovesMade}</span>
+          <span class="dim small">FEN</span>
+          <span class="mono small" id="pnFen">${esc(state.fen)}</span>
         </div>
-      </div>
-      <div class="lineup">
-        ${lineupIds.map((pid, i) => {
-          const p = getPlayer(me, pid); if (!p) return "";
-          return `<div class="row" data-row="${i}" style="display:grid;grid-template-columns:32px 1fr auto auto;gap:8px;align-items:center;padding:6px 8px;background:var(--panel-2);border:1px solid var(--line);border-radius:8px;">
-            <div class="bno">${i+1}</div>
-            <div>
-              <div class="nm">${esc(p.name)}</div>
-              <div class="small dim">Elo ${p.rating} · ${styleName(p.style)} · ${p.age}J · ${playerStatusTags(p)}</div>
-            </div>
-            <div class="mv">
-              <button class="btn ghost" data-action="move-up" data-idx="${i}">↑</button>
-              <button class="btn ghost" data-action="move-down" data-idx="${i}">↓</button>
-            </div>
-            <div class="row">
-              <button class="btn ghost" data-action="bench" data-pid="${p.id}">Bank</button>
-            </div>
-          </div>`;
-        }).join("")}
-      </div>
-    </div>
-    <div class="panel">
-      <h2>Reservebank (${reserves.length})</h2>
-      <table class="ct">
-        <thead><tr><th>Name</th><th class="num">Elo</th><th class="num">Alter</th><th>Status</th><th></th></tr></thead>
-        <tbody>
-        ${reserves.sort((a,b)=>b.rating-a.rating).map(p => `
-          <tr>
-            <td>${esc(p.name)}<div class="small dim">${styleName(p.style)} · Gehalt ${euro(p.wage)}</div></td>
-            <td class="num">${p.rating}</td>
-            <td class="num">${p.age}</td>
-            <td>${playerStatusTags(p)}</td>
-            <td class="num"><button class="btn" data-action="start" data-pid="${p.id}">Einsetzen</button>
-            <button class="btn ghost" data-action="sell" data-pid="${p.id}">Verkaufen (${euro(Math.round(marketValue(p)*0.9))})</button></td>
-          </tr>
-        `).join("")}
-        </tbody>
-      </table>
-    </div>
-  </div>`;
-}
-
-function styleName(s) { return s === "aggressive" ? "aggressiv" : s === "defensive" ? "solide" : "ausgewogen"; }
-
-// --------- Transfers ---------
-export function renderTransfersView(state) {
-  const me = getMyTeam(state);
-  const market = listMarket(state).sort((a, b) => b.player.rating - a.player.rating);
-
-  $("#view").innerHTML = `
-    <div class="panel">
-      <div class="spread">
-        <h2>Transfermarkt</h2>
-        <div class="row">
-          <span class="tag ${state.transferWindow ? "ok":"bad"}">Fenster: ${state.transferWindow ? "offen" : "geschlossen"}</span>
-          <span class="tag">Kasse ${euro(me.cash)}</span>
+        <div class="chessboard" id="pnBoard">${renderBoardHTML(state)}</div>
+        <div class="moves">
+          <div class="dim small">Zug-Historie</div>
+          <div id="pnMoves" class="mono">${renderMoveList(state)}</div>
         </div>
-      </div>
-      <div class="hr"></div>
-      <h3>Scouting</h3>
-      <div class="row small">
-        Einen neuen Spieler entdecken (als Free Agent):
-        <button class="btn" data-action="scout" data-league="3">Amateur (5.000€)</button>
-        <button class="btn" data-action="scout" data-league="2">Meister (10.000€)</button>
-        <button class="btn" data-action="scout" data-league="1">Großmeister (25.000€)</button>
-        <button class="btn" data-action="scout" data-league="0">Königsliga (80.000€)</button>
-      </div>
-      <div class="hr"></div>
-      <h3>Angebote (${market.length})</h3>
-      <table class="ct">
-        <thead><tr><th>Name</th><th class="num">Elo</th><th class="num">Pot.</th><th class="num">Alter</th><th>Stil</th><th>Verein</th><th class="num">Preis</th><th></th></tr></thead>
-        <tbody>
-          ${market.slice(0, 60).map((o, idx) => `
-            <tr>
-              <td>${esc(o.player.name)}</td>
-              <td class="num">${o.player.rating}</td>
-              <td class="num small dim">${o.player.potential ?? "—"}</td>
-              <td class="num">${o.player.age}</td>
-              <td>${styleName(o.player.style)}</td>
-              <td class="small dim">${o.isFree ? "Free Agent" : esc(state.teams[o.fromTeamId]?.name ?? "—")}</td>
-              <td class="num">${euro(o.ask)}</td>
-              <td class="num">${state.transferWindow
-                ? `<button class="btn primary" data-action="buy" data-idx="${idx}">Kaufen</button>`
-                : `<span class="small dim">geschlossen</span>`}</td>
-            </tr>
-          `).join("")}
-        </tbody>
-      </table>
-    </div>
-    <div class="panel" style="margin-top:14px;">
-      <h2>Eigener Kader</h2>
-      <table class="ct">
-        <thead><tr><th>Name</th><th class="num">Elo</th><th class="num">Alter</th><th class="num">Vertrag</th><th class="num">Marktwert</th><th></th></tr></thead>
-        <tbody>
-          ${[...me.players].sort((a,b)=>b.rating-a.rating).map(p => `
-            <tr>
-              <td>${esc(p.name)}</td>
-              <td class="num">${p.rating}</td>
-              <td class="num">${p.age}</td>
-              <td class="num">${p.contractYears ?? 1}J</td>
-              <td class="num">${euro(marketValue(p))}</td>
-              <td class="num">${state.transferWindow
-                ? `<button class="btn ghost" data-action="sell" data-pid="${p.id}">Verkaufen</button>`
-                : `<span class="small dim">Fenster zu</span>`}</td>
-            </tr>
-          `).join("")}
-        </tbody>
-      </table>
+      </section>
+
+      <section class="panel opp-panel">
+        <h3>GEGNER · Schwarz</h3>
+        <div class="stat"><span>Skill</span><b id="pnOppSkill">${skills.opponent}</b><span class="small dim">/20</span></div>
+        <div class="stat"><span>Status</span><b id="pnOppStatus">${oppStatus(state)}</b></div>
+        <div class="hr"></div>
+        <h3>AKTIVE DEBUFFS</h3>
+        <div id="pnOppBuffs">${renderOppDebuffs(state)}</div>
+      </section>
+
+      <section class="panel log-panel">
+        <h3>PROTOKOLL</h3>
+        <div id="pnLog" class="log">${renderLog(state)}</div>
+      </section>
+
+      <section class="panel intervention-panel">
+        <h3>EINGRIFFE</h3>
+        <div id="pnInterventions" class="interventions">${renderInterventions(state)}</div>
+      </section>
     </div>`;
 }
 
-// --------- News ---------
-export function renderNewsView(state) {
-  $("#view").innerHTML = `
-    <div class="panel">
-      <h2>Nachrichten</h2>
-      ${state.news.length === 0 ? `<div class="small dim">Nichts zu berichten.</div>` :
-        state.news.map(n => `<div class="news-item"><span class="t">S${n.year} T${n.day}</span>${esc(n.text)}</div>`).join("")}
-    </div>`;
+function oppStatus(state) {
+  const hasDebuff = state.buffs.some((b) => (b.opponentSkillDelta || 0) < 0);
+  return hasDebuff ? "abgelenkt" : "fokussiert";
 }
 
-// --------- Match View ---------
-// Bretter + Live-Schach wird vom Spielloop aktualisiert.
-export function renderMatchSkeleton(state, matchCtx) {
-  const me = getMyTeam(state);
-  const L = getLeague(state, me.leagueId);
-  const round = state.pendingMatchday;
-  const pair = L.schedule[round]?.find(p => p.includes(me.id));
-  if (!pair) {
-    $("#view").innerHTML = `<div class="panel"><h2>Saison beendet</h2>
-      <p>Keine Partie mehr geplant. Drücke <b>Saison abschließen</b> um Preisgelder und Auf-/Abstieg zu verrechnen.</p>
-      <button class="btn primary" data-action="end-season">Saison abschließen</button></div>`;
-    return;
+function renderBoardHTML(state) {
+  const chess = getChess();
+  if (!chess) {
+    return `<div class="board-placeholder">&nbsp;</div>`;
   }
-  const opp = state.teams[pair[0] === me.id ? pair[1] : pair[0]];
-  const isHome = pair[0] === me.id;
-
-  $("#view").innerHTML = `
-    <div class="panel">
-      <div class="spread">
-        <h2>${esc(me.name)} ${isHome ? "vs" : "@"} ${esc(opp.name)}</h2>
-        <div class="row">
-          <span class="tag">Runde ${round+1}/${SEASON_ROUNDS}</span>
-          <span class="tag rat">Ø ${teamAvgRating(me, true)} vs ${teamAvgRating(opp, true)}</span>
-          ${matchCtx
-            ? `<span class="tag" id="mdScore">0 : 0</span>`
-            : `<button class="btn primary" data-action="kickoff">Anpfiff</button>`}
-        </div>
-      </div>
-      <div class="small dim">Anpfiff zeigt alle ${BOARDS_PER_TEAM} Bretter live. Dein Match wird mit echter Schachlogik gespielt; alle anderen Begegnungen werden parallel simuliert.</div>
-      ${matchCtx ? `
-        <div class="hr"></div>
-        <div class="row">
-          <button class="btn" data-action="use-var" data-board="1">Video-Referee (Brett 1)</button>
-          <button class="btn" data-action="use-var" data-board="2">VAR (Brett 2)</button>
-          <button class="btn" data-action="use-var" data-board="3">VAR (Brett 3)</button>
-          <button class="btn" data-action="use-var" data-board="4">VAR (Brett 4)</button>
-          <button class="btn" data-action="use-var" data-board="5">VAR (Brett 5)</button>
-          <button class="btn ghost" data-action="finish-match">Rest simulieren</button>
-        </div>
-        <div class="hr"></div>
-        <div class="boards" id="liveBoards">
-          ${matchCtx.boards.map(b => renderBoardCard(b, me)).join("")}
-        </div>
-      ` : `
-        <div class="hr"></div>
-        <div class="grid cols-2">
-          <div>
-            <h3>Eure Aufstellung</h3>
-            ${renderTeamLineupTable(me)}
-          </div>
-          <div>
-            <h3>Gegner</h3>
-            ${renderTeamLineupTable(opp)}
-          </div>
-        </div>
-      `}
-    </div>`;
+  return boardToHTML(chess.board(), state.lastMove);
 }
 
-function renderTeamLineupTable(team) {
-  const rows = team.lineup.slice(0, BOARDS_PER_TEAM).map((pid, i) => {
-    const p = team.players.find(x => x.id === pid); if (!p) return "";
-    return `<tr><td>${i+1}</td><td>${esc(p.name)}</td><td class="num">${p.rating}</td><td>${styleName(p.style)}</td></tr>`;
-  }).join("");
-  return `<table class="ct"><thead><tr><th>Brett</th><th>Name</th><th class="num">Elo</th><th>Stil</th></tr></thead><tbody>${rows}</tbody></table>`;
-}
-
-export function renderBoardCard(board, myTeam) {
-  // myTeam ist Spielerteam (kann aber auch away sein, egal fuer Anzeige)
-  return `
-    <div class="board-card" data-board="${board.boardNo}">
-      <div class="hd">
-        <div class="opp">B${board.boardNo}: ♔ ${esc(board.white?.name ?? "—")} <span class="small dim">${board.white?.rating ?? ""}</span></div>
-        <div class="result ${resultClass(board)}">${esc(board.resultText ?? "…")}</div>
-      </div>
-      <div class="chessboard" data-cb="${board.boardNo}">${renderChessBoardHTML(board.chess, board.lastMove)}</div>
-      <div class="hd" style="margin-top:6px;">
-        <div class="opp">♚ ${esc(board.black?.name ?? "—")} <span class="small dim">${board.black?.rating ?? ""}</span></div>
-        <div class="small dim">Züge: <span data-moves="${board.boardNo}">${board.moves.length}</span></div>
-      </div>
-    </div>`;
-}
-
-function resultClass(b) {
-  if (!b.done) return "";
-  if (b.wScore === 1 || b.bScore === 1) return (b.wScore === 1) ? "win" : "loss";
-  return "draw";
-}
-
-const UNICODE_PIECES = {
+const UNICODE = {
   wK:"♔", wQ:"♕", wR:"♖", wB:"♗", wN:"♘", wP:"♙",
   bK:"♚", bQ:"♛", bR:"♜", bB:"♝", bN:"♞", bP:"♟︎",
 };
 
-export function renderChessBoardHTML(chess, lastMove) {
-  const b = chess.board();
+function boardToHTML(board, lastMove) {
+  // Weiß unten: board liefert rank 8 zuerst (row 0) - passt als Default.
   let html = "";
   for (let r = 0; r < 8; r++) {
     for (let f = 0; f < 8; f++) {
       const dark = (r + f) % 2 === 1;
-      const p = b[r][f];
+      const p = board[r][f];
       const sqName = "abcdefgh"[f] + (8 - r);
       const hl = lastMove && (lastMove.from === sqName || lastMove.to === sqName) ? " hl" : "";
-      const glyph = p ? UNICODE_PIECES[(p.color === "w" ? "w" : "b") + p.type.toUpperCase()] : "";
-      html += `<div class="sq ${dark ? "d" : "l"}${hl}">${glyph}</div>`;
+      const glyph = p ? UNICODE[(p.color === "w" ? "w" : "b") + p.type.toUpperCase()] : "";
+      html += `<div class="sq ${dark ? "d" : "l"}${hl}" data-sq="${sqName}">${glyph}</div>`;
     }
   }
   return html;
 }
 
-export function updateBoardCardDOM(board) {
-  const root = document.querySelector(`.board-card[data-board="${board.boardNo}"]`);
-  if (!root) return;
-  const cb = root.querySelector(".chessboard");
-  if (cb) cb.innerHTML = renderChessBoardHTML(board.chess, board.lastMove);
-  const mv = root.querySelector(`[data-moves="${board.boardNo}"]`);
-  if (mv) mv.textContent = board.moves.length;
-  const res = root.querySelector(".result");
-  if (res) { res.textContent = board.resultText ?? "…"; res.className = `result ${resultClass(board)}`; }
+function renderBuffs(state) {
+  const my = state.buffs.filter((b) => (b.selfSkillDelta || 0) > 0);
+  if (!my.length) return `<div class="dim small">keine aktiven Boosts</div>`;
+  return my.map((b) =>
+    `<div class="buff ok"><span>${esc(b.label)}</span><span class="small">+${b.selfSkillDelta} · ${b.remaining} Z.</span></div>`
+  ).join("");
 }
 
-export function updateScore(homePts, awayPts) {
-  const el = document.getElementById("mdScore");
-  if (el) el.textContent = `${fmtPts(homePts)} : ${fmtPts(awayPts)}`;
+function renderOppDebuffs(state) {
+  const opp = state.buffs.filter((b) => (b.opponentSkillDelta || 0) < 0);
+  if (!opp.length) return `<div class="dim small">keine aktiven Debuffs</div>`;
+  return opp.map((b) =>
+    `<div class="buff bad"><span>${esc(b.label)}</span><span class="small">${b.opponentSkillDelta} · ${b.remaining} Z.</span></div>`
+  ).join("");
 }
-function fmtPts(p) { return Number.isInteger(p) ? p.toFixed(1) : p.toFixed(1); }
 
-// --------- Start screen ---------
-export function renderStartScreen() {
+function renderInterventions(state) {
+  const ids = Object.keys(CONFIG.interventions);
+  return ids.map((id) => {
+    const def = CONFIG.interventions[id];
+    const check = canCast(state, id);
+    const disabled = !check.ok ? "disabled" : "";
+    const note = check.ok ? "" : `<div class="small dim">${esc(check.reason)}</div>`;
+    const effect = describeEffect(def);
+    return `<button class="iv" data-action="cast" data-id="${id}" ${disabled}>
+      <div class="iv-h"><span class="iv-label">${esc(def.label)}</span>
+        <span class="iv-cost">${def.cost}R · +${def.heatAdd}H${def.discoverChance ? ` · ${Math.round(def.discoverChance*100)}%⚠` : ""}</span></div>
+      <div class="iv-eff">${effect}</div>
+      <div class="iv-desc small dim">${esc(def.desc)}</div>
+      ${note}
+    </button>`;
+  }).join("");
+}
+
+function describeEffect(def) {
+  const parts = [];
+  if (def.selfSkillDelta) parts.push(`eigen Skill ${def.selfSkillDelta > 0 ? "+" : ""}${def.selfSkillDelta}`);
+  if (def.opponentSkillDelta) parts.push(`Gegner Skill ${def.opponentSkillDelta > 0 ? "+" : ""}${def.opponentSkillDelta}`);
+  if (def.durationMoves) parts.push(`für ${def.durationMoves} eigene Züge`);
+  if (def.id === "offerDraw") parts.push("Gegner entscheidet nach Stellung");
+  return parts.join(" · ") || "Sonderwirkung";
+}
+
+function renderMoveList(state) {
+  const sans = state.movesSan;
+  if (!sans.length) return `<span class="dim">—</span>`;
+  const out = [];
+  for (let i = 0; i < sans.length; i += 2) {
+    const n = (i / 2 | 0) + 1;
+    const w = sans[i] ?? "";
+    const b = sans[i + 1] ?? "";
+    out.push(`<span class="mv"><span class="mvn">${n}.</span> ${esc(w)}${b ? " " + esc(b) : ""}</span>`);
+  }
+  return out.join(" ");
+}
+
+function renderLog(state) {
+  return state.log.slice(0, 40).map((e) =>
+    `<div class="log-entry ${e.kind}"><span class="mono small dim">[${String(e.move).padStart(2, "0")}]</span> ${esc(e.text)}</div>`
+  ).join("");
+}
+
+// --- Partial Updates ---
+// So spart es Klickverlust + flackert weniger.
+
+export function patchLive(state) {
+  const skills = effectiveSkills(state);
+  const heatPct = Math.min(100, state.heat);
+  const heatCls = state.heat >= CONFIG.heatMax ? "bad" : state.heat >= CONFIG.heatWarnThreshold ? "warn" : "ok";
+  byId("pnSkill", (el) => el.textContent = skills.self);
+  byId("pnOppSkill", (el) => el.textContent = skills.opponent);
+  byId("pnRes", (el) => el.textContent = state.resources);
+  byId("pnHeat", (el) => { el.textContent = state.heat; el.className = heatCls; });
+  byId("pnHeatBar", (el) => { el.style.width = `${heatPct}%`; el.className = heatCls; });
+  byId("pnBuffs", (el) => el.innerHTML = renderBuffs(state));
+  byId("pnOppBuffs", (el) => el.innerHTML = renderOppDebuffs(state));
+  byId("pnOppStatus", (el) => el.textContent = oppStatus(state));
+  byId("pnFen", (el) => el.textContent = state.fen);
+  byId("pnMoves", (el) => el.innerHTML = renderMoveList(state));
+  byId("pnLog", (el) => el.innerHTML = renderLog(state));
+  byId("pnBoard", (el) => el.innerHTML = renderBoardHTML(state));
+  byId("pnInterventions", (el) => el.innerHTML = renderInterventions(state));
+}
+function byId(id, fn) { const el = document.getElementById(id); if (el) fn(el); }
+
+// ---- Result Screen ----
+export function renderResult(state) {
+  const r = state.result ?? { outcome: "draw", reason: "" };
+  const colorCls = r.outcome === "win" ? "ok" : r.outcome === "draw" ? "warn" : "bad";
+  const label = {
+    win: "★ GEWONNEN",
+    loss: "✗ VERLOREN",
+    draw: "◇ REMIS",
+    dq:   "!!! DISQUALIFIZIERT",
+  }[r.outcome] ?? r.outcome;
+
   $("#view").innerHTML = `
-    <div class="start">
-      <h1><span class="hl">♛</span> Checkmate League</h1>
-      <p class="dim">Ein Idle-Manager-Spiel rund um echtes Schach. Recrutiere Spieler, feile an Taktik, kletter die Ligapyramide hinauf.</p>
-      <div class="tag-row">
-        <span class="tag">4 Ligen</span>
-        <span class="tag">Mannschaftsschach (5 Bretter)</span>
-        <span class="tag">Transfermarkt</span>
-        <span class="tag">VAR, Gelbe Karten, Verletzungen</span>
+    <div class="term center">
+      <div class="huge ${colorCls}">${label}</div>
+      <div class="dim">${esc(r.reason)}</div>
+      <div class="hr"></div>
+      <div class="kv">
+        <div>Züge gespielt</div><div>${state.myMovesMade + (state.movesSan.length - state.myMovesMade)}</div>
+        <div>Ressourcen übrig</div><div>${state.resources} / ${CONFIG.startResources}</div>
+        <div>End-Heat</div><div>${state.heat} / ${CONFIG.heatMax}</div>
+        <div>Interventionen</div><div>${Object.entries(state.castLog).map(([k,v]) => `${k}×${v}`).join(", ") || "—"}</div>
       </div>
-      <div class="panel" style="text-align:left;">
-        <div class="field"><label>Manager-Name</label><input id="fldManager" value="Trainer Fischer" /></div>
-        <div class="field"><label>Vereinsname</label><input id="fldClub" placeholder="z. B. SC Bauernopfer" /></div>
-        <div class="field"><label>Start-Liga</label>
-          <select id="fldLeague">
-            <option value="3" selected>Amateur-Liga (Anfänger)</option>
-            <option value="2">Meister-Liga (Profi)</option>
-            <option value="1">Großmeister-Liga (Hart)</option>
-            <option value="0">Königsliga (Brutal)</option>
-          </select>
-        </div>
-        <div class="field"><label>Seed (optional)</label><input id="fldSeed" placeholder="leer für Zufall" /></div>
-        <div class="row" style="margin-top:12px;">
-          <button class="btn primary" data-action="new-game">Spiel starten</button>
-          ${localStorage.getItem("checkmate-league-save-v1") ? `<button class="btn" data-action="load-game">Speicherstand laden</button>` : ""}
-        </div>
-      </div>
+      <div class="hr"></div>
+      <h3>Zug-Historie</h3>
+      <div class="mono log-history">${renderMoveList(state)}</div>
+      <div class="hr"></div>
+      <button class="btn primary" data-action="new-match">[ NEUE PARTIE ]</button>
     </div>`;
 }
