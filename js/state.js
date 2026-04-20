@@ -47,6 +47,10 @@ export function createInitialState() {
     blackClockMs: CONFIG.startClockMs,
     lastThinkMs: 0,
 
+    // Board-Manipulations-Modus. Wird von der Cheat-Intervention gesetzt,
+    // pausiert den Tick-Loop, erwartet vom UI: Figur-Click + Zielfeld-Click.
+    cheatMode: { active: false, selectedSq: null },
+
     log: [],
 
     _seed: Math.floor(Math.random() * 1e9),
@@ -87,6 +91,8 @@ export function loadState() {
     parsed.whiteClockMs ??= CONFIG.startClockMs;
     parsed.blackClockMs ??= CONFIG.startClockMs;
     parsed.lastThinkMs ??= 0;
+    // Cheat-Mode ist rein sitzungs-lokal; nach Reload immer zuruecksetzen.
+    parsed.cheatMode = { active: false, selectedSq: null };
     return parsed;
   } catch { return null; }
 }

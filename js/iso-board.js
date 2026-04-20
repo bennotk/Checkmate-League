@@ -30,8 +30,11 @@ function squareToFR(sq) {
 // stray re-renders (e.g. a cast triggering patchLive) from replaying the move.
 let lastAnimatedMoveKey = null;
 
-function tileHTML(f, r, dark, highlighted, sq) {
-  return `<div class="iso-tile ${dark ? "d" : "l"}${highlighted ? " hl" : ""}"
+function tileHTML(f, r, dark, highlighted, sq, selected) {
+  const cls = [dark ? "d" : "l"];
+  if (highlighted) cls.push("hl");
+  if (selected) cls.push("selected");
+  return `<div class="iso-tile ${cls.join(" ")}"
                style="--col:${f};--row:${r};"
                data-sq="${sq}"></div>`;
 }
@@ -61,11 +64,17 @@ function pieceHTML(piece, f, r, opts = {}) {
 
 // board: 8x8 array from chess.js (board()[row][file]);
 // lastMove: { from, to, color, captured? } | null.
-export function renderIsoBoardHTML(board, lastMove) {
+// opts.selectedSq highlights a square as the "chosen piece" in cheat mode.
+export function renderIsoBoardHTML(board, lastMove, opts = {}) {
   const tiles = [];
   const pieces = [];
+  const selectedSq = opts.selectedSq ?? null;
 
-  const moveKey = lastMove ? `${lastMove.from}-${lastMove.to}-${lastMove.san ?? ""}` : null;
+  // Cheat-Zuege sollen nicht die normale Move-Animation ausloesen.
+  const isCheatMove = !!(lastMove && lastMove.cheat);
+  const moveKey = lastMove && !isCheatMove
+    ? `${lastMove.from}-${lastMove.to}-${lastMove.san ?? ""}`
+    : null;
   const animateMove = !!moveKey && moveKey !== lastAnimatedMoveKey;
   if (animateMove) lastAnimatedMoveKey = moveKey;
 
@@ -77,7 +86,8 @@ export function renderIsoBoardHTML(board, lastMove) {
       const dark = (r + f) % 2 === 1;
       const sq = squareName(f, r);
       const hl = !!(lastMove && (lastMove.from === sq || lastMove.to === sq));
-      tiles.push(tileHTML(f, r, dark, hl, sq));
+      const selected = selectedSq === sq;
+      tiles.push(tileHTML(f, r, dark, hl, sq, selected));
       const p = board?.[r]?.[f];
       if (!p) continue;
       const isMover = animateMove && sq === lastMove.to;

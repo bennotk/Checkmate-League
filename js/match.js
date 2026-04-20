@@ -180,6 +180,8 @@ async function tick(state) {
   if (!running) return;
   if (state.phase !== "playing") return;
   if (drawPending) { scheduleTick(state, 200); return; }
+  // Waehrend der Manager am Brett manipuliert, faehrt die Engine nicht fort.
+  if (state.cheatMode?.active) { scheduleTick(state, 200); return; }
 
   if (state.speed === 0) { scheduleTick(state, 200); return; }
 
@@ -432,3 +434,55 @@ export async function offerDraw(state) {
 
 export function getBoardState() { return chess ? chess.board() : null; }
 export function getChess() { return chess; }
+
+// Cheat-Move: Figur von beliebigem Feld auf beliebiges Feld, ohne Regelpruefung.
+// chess.js kennt put/remove als Editor-APIs, also bauen wir die Position um und
+// ueberlassen der Engine die naechste Analyse aus der neuen FEN.
+export function applyCheatMove(state, fromSq, toSq) {
+  if (!chess) return { ok: false, reason: "kein laufendes Spiel" };
+  if (!state.cheatMode?.active) return { ok: false, reason: "Cheat-Modus nicht aktiv" };
+  if (!fromSq || !toSq || fromSq === toSq) return { ok: false, reason: "Ziel waehlen" };
+
+  const piece = chess.get(fromSq);
+  if (!piece) return { ok: false, reason: "keine Figur auf Startfeld" };
+
+  // Rueckgaengig-Snapshot: chess.js akzeptiert keine zwei Koenige derselben
+  // Farbe. Falls put() scheitert, stellen wir die Ausgangsstellung wieder her.
+  const targetBefore = chess.get(toSq);
+  chess.remove(fromSq);
+  if (targetBefore) chess.remove(toSq);
+  const put = chess.put(piece, toSq);
+  if (!put) {
+    chess.put(piece, fromSq);
+    if (targetBefore) chess.put(targetBefore, toSq);
+    return { ok: false, reason: "Stellung nicht darstellbar" };
+  }
+
+  state.fen = chess.fen();
+  state.lastMove = {
+    from: fromSq, to: toSq, san: "(cheat)", color: piece.color,
+    captured: targetBefore ? targetBefore.type : null, cheat: true,
+  };
+  state.cheatMode = { active: false, selectedSq: null };
+  log(state, `Heimliche Manipulation: ${fromSq} -> ${toSq}.`, "bad");
+  emit({
+    type: "move",
+    move: { from: fromSq, to: toSq, san: "(cheat)", color: piece.color },
+    myTurn: true, cheat: true,
+  });
+  saveState(state);
+  return { ok: true };
+}
+
+export function cancelCheatMove(state) {
+  if (!state.cheatMode?.active) return;
+  state.cheatMode = { active: false, selectedSq: null };
+  emit({ type: "cheat-cancel" });
+  saveState(state);
+}
+
+export function setCheatSelection(state, sq) {
+  if (!state.cheatMode?.active) return;
+  state.cheatMode.selectedSq = sq;
+  emit({ type: "cheat-select", sq });
+}

@@ -67,6 +67,13 @@ function isThinking(state, side) {
   return state.phase === "playing" && sideToMove(state) === side;
 }
 
+function cheatBannerText(state) {
+  if (!state.cheatMode?.active) return "";
+  return state.cheatMode.selectedSq
+    ? `Figur ${state.cheatMode.selectedSq} gewaehlt — Zielfeld anklicken.`
+    : "Manipulation aktiv — Figur anklicken.";
+}
+
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({
@@ -222,8 +229,12 @@ export function renderLiveMatch(state) {
           <span class="dim small">FEN</span>
           <span class="mono small" id="pnFen">${esc(state.fen)}</span>
         </div>
-        <div class="iso-wrapper" id="pnIsoWrapper">
+        <div class="iso-wrapper ${state.cheatMode?.active ? "cheat-mode" : ""}" id="pnIsoWrapper">
           <button class="iso-fs-btn" data-iso-fullscreen type="button">[ fullscreen ]</button>
+          <div class="cheat-banner" id="pnCheatBanner">
+            <span id="pnCheatBannerText">${cheatBannerText(state)}</span>
+            <button class="btn" data-action="cheat-cancel" type="button">[ Abbrechen ]</button>
+          </div>
           <div class="iso-mount" id="pnBoard">${renderIsoSceneHTML(state)}</div>
         </div>
         <div class="moves">
@@ -277,8 +288,9 @@ function renderBoardHTML(state) {
 // layout if chess.js is not yet ready, so the tile system is always visible.
 function renderIsoSceneHTML(state) {
   const chess = getChess();
+  const selectedSq = state.cheatMode?.active ? state.cheatMode.selectedSq : null;
   if (!chess) return renderIsoBoardPlaceholder();
-  return renderIsoBoardHTML(chess.board(), state.lastMove);
+  return renderIsoBoardHTML(chess.board(), state.lastMove, { selectedSq });
 }
 
 const UNICODE = {
@@ -347,6 +359,7 @@ function describeEffect(def) {
   }
   if (def.durationMoves) parts.push(`für ${def.durationMoves} eigene Züge`);
   if (def.id === "offerDraw") parts.push("Gegner entscheidet nach Stellung");
+  if (def.manualTarget) parts.push("Figur frei umstellen (ignoriert Regeln)");
   return parts.join(" · ") || "Sonderwirkung";
 }
 
@@ -405,6 +418,9 @@ export function patchLive(state) {
     isThinking(state, state.managerIsWhite ? "w" : "b")));
   byId("pnOppClockBox", (el) => el.classList.toggle("is-thinking",
     isThinking(state, state.managerIsWhite ? "b" : "w")));
+  const iso = document.getElementById("pnIsoWrapper");
+  if (iso) iso.classList.toggle("cheat-mode", !!state.cheatMode?.active);
+  byId("pnCheatBannerText", (el) => el.textContent = cheatBannerText(state));
   byId("pnEvalFill", (el) => {
     el.style.left = eb.left + "%";
     el.style.width = eb.width + "%";

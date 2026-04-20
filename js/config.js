@@ -170,6 +170,24 @@ export const CONFIG = {
       availableUntilMove: null,
       oncePerGame: false,
     },
+    cheat: {
+      id: "cheat",
+      label: "Brett manipulieren",
+      desc: "Du verrueckst heimlich eine Figur. Das Publikum ist nicht blind.",
+      cost: 10,
+      heatAdd: 40,
+      durationMoves: 0,
+      selfSkillDelta: 0,
+      opponentSkillDelta: 0,
+      selfBlunderMul: 1,
+      opponentBlunderBonus: 0,
+      discoverChance: 0.70,       // erschreckend hohe Entdeckungschance
+      discoveryHeatAdd: 50,
+      availableFromMove: 1,
+      availableUntilMove: null,
+      oncePerGame: true,
+      manualTarget: true,         // UI muss Feld-Auswahl einholen
+    },
     offerDraw: {
       id: "offerDraw",
       label: "Remis anbieten",

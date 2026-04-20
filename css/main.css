@@ -367,6 +367,32 @@ body.retro {
   background: linear-gradient(160deg, #4a7a3a 0%, #2c5e2c 60%, #1c3a1c 100%);
   filter: drop-shadow(0 0 6px rgba(127,255,106,0.6));
 }
+.iso-tile.selected {
+  background: linear-gradient(160deg, #d6b44b 0%, #a88028 60%, #6d5114 100%);
+  filter: drop-shadow(0 0 10px rgba(242,193,78,0.8));
+}
+
+/* Cheat mode: tiles become clickable; pieces stay click-through so clicks fall
+   through to the tile below. A banner across the top explains the flow. */
+.iso-wrapper.cheat-mode .iso-board { pointer-events: auto; }
+.iso-wrapper.cheat-mode .iso-tile  { cursor: crosshair; }
+.iso-wrapper.cheat-mode .iso-piece { pointer-events: none; }
+.cheat-banner {
+  display: none;
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  z-index: 6;
+  padding: 8px 12px;
+  background: linear-gradient(90deg, rgba(242,193,78,0.22), rgba(242,193,78,0.04));
+  border-bottom: 1px solid rgba(242,193,78,0.5);
+  color: var(--warn);
+  font-size: 12px;
+  letter-spacing: 0.5px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.iso-wrapper.cheat-mode .cheat-banner { display: flex; }
 
 /* Piece: lives in the iso-pieces layer so it always sits above tile fills.
    The container's bottom edge is placed at the tile's widest horizontal slice
