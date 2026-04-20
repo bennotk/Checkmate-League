@@ -229,3 +229,157 @@ body.retro {
 .eval-bar-mid { position: absolute; top: 0; bottom: 0; left: 50%; width: 1px; background: rgba(255,255,255,.18); z-index: 1; }
 .eval-bar-label { display: flex; justify-content: space-between; font-size: 10px; color: var(--ink-dim); margin-top: 4px; align-items: baseline; }
 .eval-bar-label b { color: var(--ink); font-size: 12px; }
+
+/* ============================================================
+   Isometric chess field — dummy tile system.
+   All visuals are placeholders (CSS gradients + Unicode glyphs).
+   Art direction: swap .iso-tile / .iso-piece backgrounds for
+   real sprites without touching the layout math.
+   ============================================================ */
+
+.iso-wrapper {
+  position: relative;
+  width: 100%;
+  /* Aspect chosen so a full 8x8 iso board fits without clipping
+     (board ends up 8*tile-w wide, 4*tile-w tall). */
+  aspect-ratio: 2 / 1;
+  background:
+    radial-gradient(ellipse at 50% 55%, rgba(127,255,106,0.06), transparent 60%),
+    linear-gradient(180deg, #070c08, #050805);
+  border: 1px solid var(--line);
+  overflow: hidden;
+  isolation: isolate;
+  container-type: size;
+  container-name: iso;
+}
+
+.iso-fs-btn {
+  position: absolute;
+  top: 8px; right: 8px;
+  z-index: 5;
+  background: rgba(10, 15, 10, 0.8);
+  color: var(--accent);
+  border: 1px solid var(--line);
+  padding: 4px 10px;
+  font: inherit;
+  font-size: 11px;
+  letter-spacing: 0.5px;
+  cursor: pointer;
+}
+.iso-fs-btn:hover { border-color: var(--accent); }
+
+.iso-wrapper:fullscreen,
+.iso-wrapper.is-fullscreen {
+  aspect-ratio: auto;
+  width: 100vw;
+  height: 100vh;
+  max-width: none;
+  max-height: none;
+  background:
+    radial-gradient(ellipse at 50% 55%, rgba(127,255,106,0.08), transparent 65%),
+    linear-gradient(180deg, #070c08, #020402);
+}
+
+.iso-scene {
+  /* Tile size derived from the wrapper via container-query units so the board
+     fills exactly, whether we're inside the match panel or in fullscreen.
+     100cqw / 8 = one tile width; 100cqh / 4 = same at 2:1 aspect. */
+  --tile-w: min(calc(100cqw / 8), calc(100cqh / 4));
+  --tile-h: calc(var(--tile-w) / 2);
+  --board-w: calc(var(--tile-w) * 8);
+  --board-h: calc(var(--tile-h) * 8);
+
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: var(--board-w);
+  height: var(--board-h);
+  transform: translate(-50%, -50%);
+}
+
+.iso-board,
+.iso-pieces {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+/* Tile: a rectangle clipped into a diamond via clip-path, positioned with
+   the classic 2D->iso projection:
+     screenX = (col - row) * w/2    (shifted to board center)
+     screenY = (col + row) * h/2
+*/
+.iso-tile {
+  position: absolute;
+  width: var(--tile-w);
+  height: var(--tile-h);
+  left: calc((var(--col) - var(--row)) * (var(--tile-w) / 2) + (var(--board-w) / 2) - (var(--tile-w) / 2));
+  top:  calc((var(--col) + var(--row)) * (var(--tile-h) / 2));
+  clip-path: polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%);
+  transition: filter 0.15s ease;
+}
+.iso-tile.l {
+  background: linear-gradient(160deg, #2c3a2e 0%, #1c2a1e 60%, #14201a 100%);
+  box-shadow: inset 0 -2px 0 rgba(0,0,0,0.4);
+}
+.iso-tile.d {
+  background: linear-gradient(160deg, #0c1a0e 0%, #091408 60%, #050a05 100%);
+  box-shadow: inset 0 -2px 0 rgba(0,0,0,0.5);
+}
+.iso-tile.hl {
+  background: linear-gradient(160deg, #4a7a3a 0%, #2c5e2c 60%, #1c3a1c 100%);
+  filter: drop-shadow(0 0 6px rgba(127,255,106,0.6));
+}
+
+/* Piece: lives in the iso-pieces layer so it always sits above tile fills.
+   Anchored so the glyph appears centered on the tile's top face with a
+   small lift to suggest it is standing on the field. */
+.iso-piece {
+  position: absolute;
+  width: var(--tile-w);
+  height: calc(var(--tile-w) * 1.1);
+  left: calc((var(--col) - var(--row)) * (var(--tile-w) / 2) + (var(--board-w) / 2) - (var(--tile-w) / 2));
+  top:  calc((var(--col) + var(--row)) * (var(--tile-h) / 2) - (var(--tile-w) * 0.55));
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  pointer-events: none;
+}
+.iso-piece-shadow {
+  position: absolute;
+  left: 15%;
+  right: 15%;
+  bottom: calc(var(--tile-w) * -0.05);
+  height: calc(var(--tile-h) * 0.45);
+  background: radial-gradient(ellipse at 50% 50%, rgba(0,0,0,0.55), transparent 70%);
+  pointer-events: none;
+  z-index: 0;
+}
+.iso-piece-glyph {
+  position: relative;
+  z-index: 1;
+  font-size: calc(var(--tile-w) * 0.95);
+  line-height: 1;
+  text-align: center;
+  user-select: none;
+  /* Dummy outline to separate pieces from tiles at any size. */
+  text-shadow:
+    0 0 2px rgba(0,0,0,0.9),
+    1px 1px 0 rgba(0,0,0,0.8),
+   -1px 1px 0 rgba(0,0,0,0.8);
+}
+.iso-piece.white .iso-piece-glyph {
+  color: #e9ffe0;
+  text-shadow:
+    0 0 3px rgba(0,0,0,0.9),
+    1px 1px 0 rgba(0,0,0,0.8),
+   -1px 1px 0 rgba(0,0,0,0.8),
+    0 0 10px rgba(127,255,106,0.25);
+}
+.iso-piece.black .iso-piece-glyph {
+  color: #0d140d;
+  text-shadow:
+    0 0 2px rgba(0,0,0,0.4),
+    1px 1px 0 rgba(200,255,200,0.35),
+   -1px 0 0 rgba(200,255,200,0.25);
+}

@@ -9,6 +9,7 @@ import { canCast } from "./interventions.js";
 import { getChess } from "./match.js";
 import { getAllCharacters, getCharacterById } from "../src/game/characters.js";
 import { buildStatusLine, getPositionAssessment } from "../src/game/match-status.js";
+import { renderIsoBoardHTML, renderIsoBoardPlaceholder, bindIsoFullscreen } from "./iso-board.js";
 
 function evalBarGeom(evalPawns) {
   const clamped = Math.max(-5, Math.min(5, evalPawns));
@@ -181,7 +182,10 @@ export function renderLiveMatch(state) {
           <span class="dim small">FEN</span>
           <span class="mono small" id="pnFen">${esc(state.fen)}</span>
         </div>
-        <div class="chessboard" id="pnBoard">${renderBoardHTML(state)}</div>
+        <div class="iso-wrapper" id="pnIsoWrapper">
+          <button class="iso-fs-btn" data-iso-fullscreen type="button">[ fullscreen ]</button>
+          <div class="iso-mount" id="pnBoard">${renderIsoSceneHTML(state)}</div>
+        </div>
         <div class="moves">
           <div class="dim small">Zug-Historie</div>
           <div id="pnMoves" class="mono">${renderMoveList(state)}</div>
@@ -208,6 +212,8 @@ export function renderLiveMatch(state) {
         <div id="pnInterventions" class="interventions">${renderInterventions(state)}</div>
       </section>
     </div>`;
+
+  bindIsoFullscreen(document.getElementById("pnIsoWrapper"));
 }
 
 function oppStatus(state) {
@@ -221,6 +227,14 @@ function renderBoardHTML(state) {
     return `<div class="board-placeholder">&nbsp;</div>`;
   }
   return boardToHTML(chess.board(), state.lastMove);
+}
+
+// Isometric scene used in the live match. Falls back to the starting position
+// layout if chess.js is not yet ready, so the tile system is always visible.
+function renderIsoSceneHTML(state) {
+  const chess = getChess();
+  if (!chess) return renderIsoBoardPlaceholder();
+  return renderIsoBoardHTML(chess.board(), state.lastMove);
 }
 
 const UNICODE = {
@@ -327,7 +341,7 @@ export function patchLive(state) {
   byId("pnFen", (el) => el.textContent = state.fen);
   byId("pnMoves", (el) => el.innerHTML = renderMoveList(state));
   byId("pnLog", (el) => el.innerHTML = renderLog(state));
-  byId("pnBoard", (el) => el.innerHTML = renderBoardHTML(state));
+  byId("pnBoard", (el) => el.innerHTML = renderIsoSceneHTML(state));
   byId("pnInterventions", (el) => el.innerHTML = renderInterventions(state));
   byId("pnStatusLine", (el) => el.textContent = buildStatusBarText(state));
   byId("pnEvalFill", (el) => {
