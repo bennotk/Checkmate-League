@@ -197,3 +197,35 @@ body.retro {
 .hl.ok { color: var(--ok); }
 .hl.warn { color: var(--warn); }
 .hl.bad { color: var(--danger); }
+
+/* --- champion picker (pregame) --- */
+.section-title { font-size: 11px; color: var(--ink-dim); letter-spacing: 1px; text-transform: uppercase; margin: 14px 0 8px; }
+.champion-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 10px; }
+.champion-card {
+  text-align: left; background: var(--panel-2); color: var(--ink);
+  border: 1px solid var(--line); padding: 10px 12px; cursor: pointer;
+  font: inherit;
+}
+.champion-card:hover { border-color: var(--accent); }
+.champion-card.is-active { border-color: var(--accent); background: rgba(127,255,106,.08); }
+.champion-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 4px; gap: 8px; }
+.champion-name { color: var(--accent); font-weight: 700; letter-spacing: .5px; font-size: 13px; }
+.champion-role { color: var(--ink-dim); font-size: 10px; text-transform: uppercase; letter-spacing: .5px; }
+.champion-stats { display: flex; flex-wrap: wrap; gap: 10px; font-size: 11px; color: var(--ink); margin: 4px 0 6px; }
+.champion-stats span { min-width: 50px; }
+.champion-meta { font-size: 10px; line-height: 1.5; }
+
+/* --- status strip (live match) --- */
+.status-strip { padding: 4px 4px 10px; border-bottom: 1px dashed var(--line); margin-bottom: 8px; }
+.status-line { color: var(--accent); font-size: 12px; letter-spacing: .5px; font-weight: 700; }
+.opening-line { color: var(--ink-dim); font-size: 11px; letter-spacing: .5px; margin-top: 6px; }
+
+.eval-bar { margin: 8px 0 2px; }
+.eval-bar-track { position: relative; height: 14px; background: #0a150b; border: 1px solid var(--line); overflow: hidden; }
+.eval-bar-fill { position: absolute; top: 0; bottom: 0; left: 50%; width: 0;
+                 background: var(--accent); transition: width .25s ease-out, left .25s ease-out, background .25s; }
+.eval-bar-fill.bad { background: var(--danger); box-shadow: 0 0 10px rgba(255,94,94,.35); }
+.eval-bar-fill.neutral { background: var(--ink-dim); }
+.eval-bar-mid { position: absolute; top: 0; bottom: 0; left: 50%; width: 1px; background: rgba(255,255,255,.18); z-index: 1; }
+.eval-bar-label { display: flex; justify-content: space-between; font-size: 10px; color: var(--ink-dim); margin-top: 4px; align-items: baseline; }
+.eval-bar-label b { color: var(--ink); font-size: 12px; }

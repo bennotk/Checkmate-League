@@ -12,6 +12,9 @@ export function createInitialState() {
     result: null,           // { outcome: "win"|"loss"|"draw"|"dq", reason: string } bei phase "finished"
     speed: 1,               // 0 | 1 | 4 | 16
 
+    // Champion-Auswahl (Pregame)
+    selectedChampionId: "volkov",
+
     // Ressourcen / Heat
     resources: CONFIG.startResources,
     heat: CONFIG.startHeat,
@@ -30,6 +33,12 @@ export function createInitialState() {
     fullMoveNumber: 1,      // 1-basiert
     myMovesMade: 0,         // wie viele Zuege mein Spieler schon gemacht hat
     lastMove: null,         // { from, to, san, color }
+
+    // Engine-Status fuer Statuszeile / Eval-Bar / Eroeffnungserkennung
+    evalPawns: 0,
+    evals: [],              // white-relative Evaluierungen pro Halbzug
+    openingEco: null,
+    openingName: null,
 
     // Log-Eintraege fuer UI ("Narration")
     log: [],

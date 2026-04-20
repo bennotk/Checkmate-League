@@ -66,10 +66,18 @@ document.addEventListener("click", async (e) => {
       break;
     }
     case "new-match": {
+      const keepId = state?.selectedChampionId;
       state = createInitialState();
+      if (keepId) state.selectedChampionId = keepId;
       saveState(state);
       renderTopbar(state);
-      renderPreGame();
+      renderPreGame(state);
+      break;
+    }
+    case "select-champion": {
+      state.selectedChampionId = t.dataset.id;
+      saveState(state);
+      renderPreGame(state);
       break;
     }
     case "cast": {
@@ -117,7 +125,7 @@ document.addEventListener("click", async (e) => {
 // Router
 function routeRender() {
   if (!state) { renderPreGame(); return; }
-  if (state.phase === "pregame") renderPreGame();
+  if (state.phase === "pregame") renderPreGame(state);
   else if (state.phase === "playing") renderLiveMatch(state);
   else if (state.phase === "finished") renderResult(state);
 }

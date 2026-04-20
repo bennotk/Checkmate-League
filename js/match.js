@@ -12,6 +12,19 @@ import { StockfishEngine } from "./stockfish-engine.js";
 import {
   log, effectiveSkills, decrementBuffsAfterOwnMove, saveState,
 } from "./state.js";
+import { getGamePhase } from "../src/game/match-status.js";
+import { getCommentary } from "../src/game/commentary.js";
+import { detectOpening } from "../src/game/openings.js";
+
+function detectMoveType(san) {
+  if (!san) return "normal";
+  if (san.startsWith("O-O")) return "castle";
+  if (san.endsWith("#")) return "checkmate";
+  if (san.endsWith("+")) return "check";
+  if (san.includes("=")) return "promotion";
+  if (san.includes("x")) return "capture";
+  return "normal";
+}
 
 let player = null;   // StockfishEngine Weiss
 let opponent = null; // StockfishEngine Schwarz
@@ -107,7 +120,7 @@ async function tick(state) {
   else engine.setSkillLevel(skills.opponent);
 
   try {
-    const bestmove = await engine.go(chess.fen(), CONFIG.movetimeMs);
+    const { bestmove, cp, mate } = await engine.go(chess.fen(), CONFIG.movetimeMs);
     if (!bestmove || bestmove === "(none)") {
       // keine Antwort: sollte nur bei GameOver passieren
       finalizeByBoard(state);
@@ -129,6 +142,22 @@ async function tick(state) {
     state.fen = chess.fen();
     state.lastMove = { from: result.from, to: result.to, san: result.san, color: result.color };
 
+    // Eval aus Sicht von Weiss (= mein Spieler) speichern.
+    // Stockfish liefert cp aus Sicht der Seite, die am Zug war (= die gerade gezogen hat).
+    const prevEval = state.evals[state.evals.length - 1] ?? 0;
+    let evalPawns;
+    if (mate != null) {
+      // forced mate: riesiger Betrag, korrektes Vorzeichen
+      const cpWhiteMate = (myTurn ? 1 : -1) * (mate > 0 ? 10000 : -10000);
+      evalPawns = cpWhiteMate / 100;
+    } else {
+      const cpWhite = myTurn ? cp : -cp;
+      evalPawns = cpWhite / 100;
+    }
+    state.evals.push(evalPawns);
+    state.evalPawns = evalPawns;
+    const evalDelta = +(evalPawns - prevEval).toFixed(2);
+
     if (myTurn) {
       state.myMovesMade++;
       // Buffs laufen nach meinem Zug einen Tick runter
@@ -136,6 +165,26 @@ async function tick(state) {
     } else {
       state.fullMoveNumber++;
     }
+
+    // Eroeffnungserkennung, nur so lange relevant wie die Buecherei reicht.
+    if (state.movesSan.length <= 25) {
+      const op = detectOpening(state.movesSan);
+      if (op && op.name !== state.openingName) {
+        state.openingName = op.name;
+        state.openingEco = op.eco;
+        log(state, `Eröffnung: ${op.eco} — ${op.name}`, "info");
+      }
+    }
+
+    // Kommentator
+    const commentary = getCommentary({
+      phase: getGamePhase(state.fullMoveNumber),
+      evalDelta,
+      moveType: detectMoveType(result.san),
+      isOwnMove: myTurn,
+      eval: evalPawns,
+    });
+    if (commentary) log(state, commentary, "dim");
 
     emit({ type: "move", move: result, myTurn });
     saveState(state);

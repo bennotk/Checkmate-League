@@ -7,6 +7,28 @@ import { CONFIG } from "./config.js";
 import { effectiveSkills } from "./state.js";
 import { canCast } from "./interventions.js";
 import { getChess } from "./match.js";
+import { getAllCharacters, getCharacterById } from "../src/game/characters.js";
+import { buildStatusLine, getPositionAssessment } from "../src/game/match-status.js";
+
+function evalBarGeom(evalPawns) {
+  const clamped = Math.max(-5, Math.min(5, evalPawns));
+  const pct = Math.abs(clamped) / 5 * 50;
+  const left = clamped >= 0 ? 50 : 50 - pct;
+  const tone = getPositionAssessment(evalPawns).tone;
+  const cls = tone.includes("bad") ? "bad" : tone === "neutral" ? "neutral" : "";
+  const value = (evalPawns >= 0 ? "+" : "") + evalPawns.toFixed(1);
+  return { left, width: pct, cls, value };
+}
+
+function buildStatusBarText(state) {
+  const mn = Math.max(1, state.fullMoveNumber ?? 1);
+  return buildStatusLine({ evalPawns: state.evalPawns ?? 0, moveNumber: mn });
+}
+
+function openingLineText(state) {
+  if (state.openingName) return `${state.openingEco} — ${state.openingName}`;
+  return "Eröffnung noch offen";
+}
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
@@ -50,7 +72,29 @@ export function renderTopbar(state) {
 }
 
 // ---- Pre-Game ----
-export function renderPreGame() {
+export function renderPreGame(state) {
+  const selectedId = state?.selectedChampionId ?? getAllCharacters()[0].id;
+  const cardsHtml = getAllCharacters().map((c) => `
+    <button class="champion-card${c.id === selectedId ? " is-active" : ""}"
+            data-action="select-champion" data-id="${esc(c.id)}">
+      <div class="champion-head">
+        <span class="champion-name">${esc(c.name)}</span>
+        <span class="champion-role">${esc(c.role)} · ${c.age}</span>
+      </div>
+      <div class="champion-stats">
+        <span>OP ${c.stats.opening}</span>
+        <span>MG ${c.stats.middlegame}</span>
+        <span>EG ${c.stats.endgame}</span>
+        <span>NRV ${c.stats.nerves}</span>
+        <span>PRS ${c.stats.presence}</span>
+        <span>LOY ${c.loyalty}</span>
+      </div>
+      <div class="champion-meta small dim">
+        + ${esc(c.traits.join(", ") || "—")}<br/>
+        − ${esc(c.flaws.join(", ") || "—")}
+      </div>
+    </button>`).join("");
+
   $("#view").innerHTML = `
     <div class="term">
       <h1>♛ CHECKMATE LEAGUE</h1>
@@ -59,13 +103,16 @@ export function renderPreGame() {
       <div class="hr"></div>
       <p>Du bist nicht der Schachspieler. Du bist sein <span class="hl">Manager</span>.</p>
       <p>Dein Spieler sitzt am Brett. Du sitzt im Publikum und beeinflusst die Partie indirekt.</p>
+
+      <h3 class="section-title">Champion auswählen</h3>
+      <div class="champion-cards">${cardsHtml}</div>
+
+      <div class="hr"></div>
       <div class="kv">
-        <div>Mein Spieler (Weiß)</div><div>Skill ${CONFIG.startSkillPlayer}/20</div>
-        <div>Gegner (Schwarz)</div><div>Skill ${CONFIG.startSkillOpponent}/20</div>
+        <div>Start-Skill (Weiß/Schwarz)</div><div>${CONFIG.startSkillPlayer} / ${CONFIG.startSkillOpponent}</div>
         <div>Ressourcen</div><div>${CONFIG.startResources}</div>
         <div>Heat-Limit</div><div>${CONFIG.heatMax}</div>
       </div>
-      <div class="hr"></div>
       <ul class="term-list">
         <li>Ressourcen sind knapp — jede Intervention kostet.</li>
         <li>Heat steigt bei jedem Eingriff. Bei ${CONFIG.heatMax} wirst du disqualifiziert.</li>
@@ -82,11 +129,14 @@ export function renderLiveMatch(state) {
   const skills = effectiveSkills(state);
   const heatPct = Math.min(100, state.heat);
   const heatCls = state.heat >= CONFIG.heatMax ? "bad" : state.heat >= CONFIG.heatWarnThreshold ? "warn" : "ok";
+  const champ = getCharacterById(state.selectedChampionId);
+  const champName = champ?.name ?? "Mein Spieler";
+  const eb = evalBarGeom(state.evalPawns ?? 0);
 
   $("#view").innerHTML = `
     <div class="match-grid">
       <section class="panel player-panel">
-        <h3>MEIN SPIELER · Weiß</h3>
+        <h3>${esc(champName.toUpperCase())} · Weiß</h3>
         <div class="stat"><span>Skill</span><b id="pnSkill">${skills.self}</b><span class="small dim">/20</span></div>
         <div class="stat"><span>Ressourcen</span><b id="pnRes">${state.resources}</b></div>
         <div class="stat"><span>Heat</span><b id="pnHeat" class="${heatCls}">${state.heat}</b></div>
@@ -97,6 +147,21 @@ export function renderLiveMatch(state) {
       </section>
 
       <section class="board-panel">
+        <div class="status-strip">
+          <div class="status-line" id="pnStatusLine">${esc(buildStatusBarText(state))}</div>
+          <div class="eval-bar">
+            <div class="eval-bar-track">
+              <div class="eval-bar-mid"></div>
+              <div class="eval-bar-fill ${eb.cls}" id="pnEvalFill" style="left:${eb.left}%;width:${eb.width}%"></div>
+            </div>
+            <div class="eval-bar-label">
+              <span>← Schwarz</span>
+              <b id="pnEvalValue">${eb.value}</b>
+              <span>Weiß →</span>
+            </div>
+          </div>
+          <div class="opening-line" id="pnOpening">${esc(openingLineText(state))}</div>
+        </div>
         <div class="match-head">
           <span class="dim small">Zug ${state.myMovesMade}</span>
           <span class="dim small">FEN</span>
@@ -233,6 +298,7 @@ export function patchLive(state) {
   const skills = effectiveSkills(state);
   const heatPct = Math.min(100, state.heat);
   const heatCls = state.heat >= CONFIG.heatMax ? "bad" : state.heat >= CONFIG.heatWarnThreshold ? "warn" : "ok";
+  const eb = evalBarGeom(state.evalPawns ?? 0);
   byId("pnSkill", (el) => el.textContent = skills.self);
   byId("pnOppSkill", (el) => el.textContent = skills.opponent);
   byId("pnRes", (el) => el.textContent = state.resources);
@@ -246,6 +312,14 @@ export function patchLive(state) {
   byId("pnLog", (el) => el.innerHTML = renderLog(state));
   byId("pnBoard", (el) => el.innerHTML = renderBoardHTML(state));
   byId("pnInterventions", (el) => el.innerHTML = renderInterventions(state));
+  byId("pnStatusLine", (el) => el.textContent = buildStatusBarText(state));
+  byId("pnEvalFill", (el) => {
+    el.style.left = eb.left + "%";
+    el.style.width = eb.width + "%";
+    el.className = "eval-bar-fill " + eb.cls;
+  });
+  byId("pnEvalValue", (el) => el.textContent = eb.value);
+  byId("pnOpening", (el) => el.textContent = openingLineText(state));
 }
 function byId(id, fn) { const el = document.getElementById(id); if (el) fn(el); }
 

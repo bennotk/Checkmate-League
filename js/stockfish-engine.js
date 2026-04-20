@@ -64,11 +64,9 @@ export class StockfishEngine {
       const bestmove = parts[1] || null;
       const done = this._pending;
       this._pending = null;
-      if (done.kind === "bestmove") {
-        done.resolve(bestmove);
-      } else if (done.kind === "evaluate") {
-        done.resolve({ bestmove, cp: done.lastCp ?? 0, mate: done.lastMate ?? null });
-      }
+      // go() resolves with {bestmove, cp, mate} so the caller gets a cheap
+      // eval snapshot without running a second analysis pass.
+      done.resolve({ bestmove, cp: done.lastCp ?? 0, mate: done.lastMate ?? null });
       this._drain();
     }
   }
@@ -101,7 +99,7 @@ export class StockfishEngine {
     this._send("ucinewgame");
   }
 
-  /** Bestmove fuer FEN finden, mit begrenzter Bedenkzeit. */
+  /** Bestmove + letzte Eval fuer FEN finden. Rueckgabe: {bestmove, cp, mate}. */
   go(fen, movetimeMs = 500) {
     return this._enqueue({
       kind: "bestmove",
