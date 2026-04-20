@@ -17,15 +17,39 @@ export const CONFIG = {
   // --- Engine ---
   skillMin: 0,
   skillMax: 20,
-  // Bedenkzeit je Halbzug in ms. Stockfish Skill 0-20 ist auch davon abhaengig,
-  // aber wir halten es kurz um zuegige Partien zu haben.
-  movetimeMs: 500,
   // Tiefe fuer Evaluationen (Remis-Formel) unabhaengig von movetime.
   evalDepth: 12,
 
-  // --- Tick-Geschwindigkeit: minimaler Abstand zwischen Halbzuegen (UI-Tempo) ---
-  // Entspricht "Pause / 1x / 4x / 16x". Werte sind Ziel-Abstaende in ms pro Halbzug.
-  speedIntervalsMs: { 0: 0, 1: 1200, 4: 400, 16: 120 },
+  // --- Dynamische Bedenkzeit ---
+  // "Chess-Sekunden" pro Halbzug, abgeleitet aus der Stellungs-Komplexitaet.
+  // Durchschnitt ca. 3000 ms bei 1x-Tempo, so dass das Match atmet wie eine
+  // echte Partie. Einfache Zuege (Eroeffnungsbuch, wenige Alternativen) sind
+  // deutlich schneller; Schlagzuege, Schach, lange Zug-Listen dauern laenger.
+  dynamicThinkTime: {
+    baseMs: 1800,
+    perLegalMoveMs: 40,         // je extra legaler Zug ueber 20 hinaus
+    inCheckBonusMs: 800,
+    afterCaptureBonusMs: 600,
+    evalSwingBonusPerPawnMs: 400,
+    phaseBonusMs: { opening: -600, middlegame: 900, endgame: 300 },
+    jitter: 0.18,               // +- 18 % Random-Variation
+    min: 400,
+    max: 6500,
+  },
+  // Stockfish-Suchzeit wird aus der Bedenkzeit abgeleitet (begrenzt, damit
+  // auch sehr lange "Denkzeiten" die Engine nicht ausbremsen oder leerlaufen).
+  engineMovetime: { factor: 0.55, min: 150, max: 1400 },
+
+  // --- Schachuhr ---
+  // Startguthaben je Seite in ms. Jeder Zug zieht die dynamische Bedenkzeit ab.
+  // Faellt eine Seite auf 0, verliert sie durch Zeit.
+  startClockMs: 10 * 60 * 1000,
+
+  // --- Tempo-Faktor ---
+  // Der Manager waehlt 0/1/4/16. Die Wandzeit pro Zug ist dynamicThinkTime
+  // dividiert durch diesen Faktor (0 = Pause). Die Uhr selbst tickt in
+  // Schachzeit (unabhaengig vom gewaehlten Tempo).
+  speedFactor: { 0: 0, 1: 1, 4: 4, 16: 16 },
 
   // --- Remis-Formel ---
   // P_accept = clamp(base + slope * eval_pawns_oppView, floor, ceiling)

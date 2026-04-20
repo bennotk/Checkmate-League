@@ -27,6 +27,7 @@ routeRender();
 onMatchUpdate((evt) => {
   if (!state) return;
   if (evt.type === "move" || evt.type === "starting" || evt.type === "ready"
+      || evt.type === "thinking"
       || evt.type === "draw-offered" || evt.type === "draw-accepted" || evt.type === "draw-declined") {
     renderTopbar(state);
     if (state.phase === "playing") patchLive(state);

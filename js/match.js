@@ -26,6 +26,50 @@ function detectMoveType(san) {
   return "normal";
 }
 
+// Predicts how long the side-to-move should "think" about this position.
+// Returns a chess-seconds (ms) budget. Average ~3000 ms. Drives both the
+// Stockfish search budget and the chess-clock deduction.
+function computeThinkTime(state) {
+  const c = CONFIG.dynamicThinkTime;
+  const legalMoves = chess.moves();
+  const inCheck = typeof chess.inCheck === "function"
+    ? chess.inCheck()
+    : (typeof chess.in_check === "function" ? chess.in_check() : false);
+
+  const prevEval = state.evals[state.evals.length - 2] ?? 0;
+  const curEval  = state.evals[state.evals.length - 1] ?? 0;
+  const evalSwing = Math.abs(curEval - prevEval);
+  const phase = getGamePhase(state.fullMoveNumber ?? 1);
+  const lastWasCapture = !!state.lastMove?.captured;
+
+  let t = c.baseMs;
+  t += Math.max(0, legalMoves.length - 20) * c.perLegalMoveMs;
+  if (inCheck) t += c.inCheckBonusMs;
+  if (lastWasCapture) t += c.afterCaptureBonusMs;
+  t += Math.min(5, evalSwing) * c.evalSwingBonusPerPawnMs;
+  t += c.phaseBonusMs?.[phase] ?? 0;
+
+  const jitter = 1 + (Math.random() * 2 - 1) * c.jitter;
+  t *= jitter;
+
+  return Math.max(c.min, Math.min(c.max, Math.round(t)));
+}
+
+function engineMovetimeFor(thinkMs) {
+  const e = CONFIG.engineMovetime;
+  return Math.max(e.min, Math.min(e.max, Math.round(thinkMs * e.factor)));
+}
+
+function deductClock(state, movingColor, thinkMs) {
+  if (movingColor === "w") state.whiteClockMs = Math.max(0, state.whiteClockMs - thinkMs);
+  else state.blackClockMs = Math.max(0, state.blackClockMs - thinkMs);
+  state.lastThinkMs = thinkMs;
+}
+
+function flagged(state) {
+  return state.whiteClockMs <= 0 || state.blackClockMs <= 0;
+}
+
 let whiteEngine = null;
 let blackEngine = null;
 let chess = null;
@@ -61,6 +105,9 @@ export async function startMatch(state) {
   state.evals = [];
   state.openingEco = null;
   state.openingName = null;
+  state.whiteClockMs = CONFIG.startClockMs;
+  state.blackClockMs = CONFIG.startClockMs;
+  state.lastThinkMs = 0;
   state.log = [];
 
   // Farbwahl per Muenzwurf.
@@ -131,7 +178,16 @@ async function tick(state) {
   blackEngine.setSkillLevel(skills.black);
 
   try {
-    const { bestmove, cp, mate } = await engine.go(chess.fen(), CONFIG.movetimeMs);
+    // Dynamisches Timing: Bedenkzeit aus Stellung ableiten, Engine-Suchzeit
+    // daraus abgeleitet, Wandzeit durch den Speed-Regler geteilt.
+    const thinkMs = computeThinkTime(state);
+    const engineMs = engineMovetimeFor(thinkMs);
+    const factor = CONFIG.speedFactor?.[state.speed] ?? 1;
+    const wallTotalMs = factor > 0 ? (thinkMs / factor) : 0;
+    emit({ type: "thinking", side: turn, thinkMs, wallTotalMs });
+
+    const startWall = performance.now();
+    const { bestmove, cp, mate } = await engine.go(chess.fen(), engineMs);
     if (!bestmove || bestmove === "(none)") {
       finalizeByBoard(state);
       return;
@@ -151,6 +207,9 @@ async function tick(state) {
     state.movesUci.push(bestmove);
     state.fen = chess.fen();
     state.lastMove = { from: result.from, to: result.to, san: result.san, color: result.color, captured: result.captured ?? null };
+
+    // Schachuhr der ziehenden Seite abziehen.
+    deductClock(state, result.color, thinkMs);
 
     // Eval white-relative. Stockfish liefert cp aus Sicht der Seite,
     // die gerade gezogen hat.
@@ -197,13 +256,27 @@ async function tick(state) {
     emit({ type: "move", move: result, myTurn: isManagerPlayersMove });
     saveState(state);
 
+    // Zeitueberschreitung pruefen: Uhr auf 0 -> Niederlage fuer diese Seite.
+    if (flagged(state)) {
+      const whiteFlagged = state.whiteClockMs <= 0;
+      const managerLost = whiteFlagged === state.managerIsWhite;
+      finishMatch(state, {
+        outcome: managerLost ? "loss" : "win",
+        reason: `Zeit abgelaufen — ${whiteFlagged ? "Weiß" : "Schwarz"} faellt durch Zeit.`,
+      });
+      return;
+    }
+
     if (chess.isGameOver()) {
       finalizeByBoard(state);
       return;
     }
 
-    const delay = CONFIG.speedIntervalsMs[state.speed] ?? 800;
-    scheduleTick(state, Math.max(30, delay));
+    // Restliche Wandzeit zwischen Zuegen warten, damit sich das Match atmend
+    // anfuehlt (aber nie weniger als 30 ms, um den Tick nicht zu starven).
+    const engineElapsed = performance.now() - startWall;
+    const remainingWall = factor > 0 ? Math.max(0, wallTotalMs - engineElapsed) : 0;
+    scheduleTick(state, Math.max(30, Math.round(remainingWall)));
   } catch (err) {
     console.error(err);
     log(state, "Fehler in Engine-Kommunikation.", "bad");

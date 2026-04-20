@@ -41,6 +41,12 @@ export function createInitialState() {
     openingEco: null,
     openingName: null,
 
+    // Schachuhr (ms). Wird in match.js beim Start auf CONFIG.startClockMs gesetzt
+    // und nach jedem Halbzug um die berechnete Bedenkzeit gekuerzt.
+    whiteClockMs: CONFIG.startClockMs,
+    blackClockMs: CONFIG.startClockMs,
+    lastThinkMs: 0,
+
     log: [],
 
     _seed: Math.floor(Math.random() * 1e9),
@@ -78,6 +84,9 @@ export function loadState() {
     parsed.evals ??= [];
     parsed.openingEco ??= null;
     parsed.openingName ??= null;
+    parsed.whiteClockMs ??= CONFIG.startClockMs;
+    parsed.blackClockMs ??= CONFIG.startClockMs;
+    parsed.lastThinkMs ??= 0;
     return parsed;
   } catch { return null; }
 }

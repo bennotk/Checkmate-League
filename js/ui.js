@@ -31,6 +31,42 @@ function openingLineText(state) {
   return "Eröffnung noch offen";
 }
 
+// mm:ss for a chess clock. Under 20 s we show one decimal so the final
+// seconds feel like a real flag-fall.
+function formatClock(ms) {
+  if (ms == null || !isFinite(ms) || ms < 0) ms = 0;
+  if (ms < 20000) {
+    const s = ms / 1000;
+    return `0:${s.toFixed(1).padStart(4, "0")}`;
+  }
+  const total = Math.ceil(ms / 1000);
+  const m = Math.floor(total / 60);
+  const s = total % 60;
+  return `${m}:${String(s).padStart(2, "0")}`;
+}
+
+// Which clock belongs to the manager's side vs the opponent's side.
+function managerClockMs(state) {
+  return state.managerIsWhite ? state.whiteClockMs : state.blackClockMs;
+}
+function opponentClockMs(state) {
+  return state.managerIsWhite ? state.blackClockMs : state.whiteClockMs;
+}
+
+// Which side is about to move next (based on move count since White starts).
+function sideToMove(state) {
+  return (state.movesSan?.length ?? 0) % 2 === 0 ? "w" : "b";
+}
+function clockCls(state, side) {
+  const ms = side === "w" ? state.whiteClockMs : state.blackClockMs;
+  if (ms <= 0) return "bad";
+  if (ms < 30000) return "warn";
+  return "";
+}
+function isThinking(state, side) {
+  return state.phase === "playing" && sideToMove(state) === side;
+}
+
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({
@@ -152,6 +188,10 @@ export function renderLiveMatch(state) {
       <section class="panel player-panel">
         <h3>${esc(myName.toUpperCase())} · ${myColor}</h3>
         <div class="small dim">${esc(myChamp?.role ?? "")}</div>
+        <div class="clock-display ${isThinking(state, state.managerIsWhite ? "w" : "b") ? "is-thinking" : ""}" id="pnMyClockBox">
+          <span class="dim small">Bedenkzeit</span>
+          <b class="clock-time ${clockCls(state, state.managerIsWhite ? "w" : "b")}" id="pnMyClock">${formatClock(managerClockMs(state))}</b>
+        </div>
         <div class="stat"><span id="pnSkillLabel">Skill (${skills.phase})</span><b id="pnSkill">${skills.self}</b><span class="small dim">/20</span></div>
         <div class="stat"><span>Ressourcen</span><b id="pnRes">${state.resources}</b></div>
         <div class="stat"><span>Heat</span><b id="pnHeat" class="${heatCls}">${state.heat}</b></div>
@@ -195,6 +235,10 @@ export function renderLiveMatch(state) {
       <section class="panel opp-panel">
         <h3>${esc(oppName.toUpperCase())} · ${oppColor}</h3>
         <div class="small dim">${esc(oppChamp?.role ?? "")}</div>
+        <div class="clock-display ${isThinking(state, state.managerIsWhite ? "b" : "w") ? "is-thinking" : ""}" id="pnOppClockBox">
+          <span class="dim small">Bedenkzeit</span>
+          <b class="clock-time ${clockCls(state, state.managerIsWhite ? "b" : "w")}" id="pnOppClock">${formatClock(opponentClockMs(state))}</b>
+        </div>
         <div class="stat"><span id="pnOppSkillLabel">Skill (${skills.phase})</span><b id="pnOppSkill">${skills.opponent}</b><span class="small dim">/20</span></div>
         <div class="stat"><span>Status</span><b id="pnOppStatus">${oppStatus(state)}</b></div>
         <div class="hr"></div>
@@ -344,6 +388,18 @@ export function patchLive(state) {
   byId("pnBoard", (el) => el.innerHTML = renderIsoSceneHTML(state));
   byId("pnInterventions", (el) => el.innerHTML = renderInterventions(state));
   byId("pnStatusLine", (el) => el.textContent = buildStatusBarText(state));
+  byId("pnMyClock", (el) => {
+    el.textContent = formatClock(managerClockMs(state));
+    el.className = "clock-time " + clockCls(state, state.managerIsWhite ? "w" : "b");
+  });
+  byId("pnOppClock", (el) => {
+    el.textContent = formatClock(opponentClockMs(state));
+    el.className = "clock-time " + clockCls(state, state.managerIsWhite ? "b" : "w");
+  });
+  byId("pnMyClockBox", (el) => el.classList.toggle("is-thinking",
+    isThinking(state, state.managerIsWhite ? "w" : "b")));
+  byId("pnOppClockBox", (el) => el.classList.toggle("is-thinking",
+    isThinking(state, state.managerIsWhite ? "b" : "w")));
   byId("pnEvalFill", (el) => {
     el.style.left = eb.left + "%";
     el.style.width = eb.width + "%";
