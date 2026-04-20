@@ -57,6 +57,10 @@ export async function startMatch(state) {
   state.castLog = {};
   state.resources = CONFIG.startResources;
   state.heat = CONFIG.startHeat;
+  state.evalPawns = 0;
+  state.evals = [];
+  state.openingEco = null;
+  state.openingName = null;
   state.log = [];
   log(state, "Partie startet. Viel Erfolg, Herr Manager.", "ok");
 

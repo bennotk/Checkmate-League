@@ -68,6 +68,13 @@ export function loadState() {
     if (!raw) return null;
     const parsed = JSON.parse(raw);
     if (!parsed || parsed.version !== 2) return null;
+    // Backfill fields added after the v2 schema shipped; saves that predate
+    // these features would otherwise crash the tick loop with undefined.
+    parsed.selectedChampionId ??= "volkov";
+    parsed.evalPawns ??= 0;
+    parsed.evals ??= [];
+    parsed.openingEco ??= null;
+    parsed.openingName ??= null;
     return parsed;
   } catch { return null; }
 }
