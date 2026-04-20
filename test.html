@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Checkmate League — Test Harness</title>
+<style>
+  body { background: #0a0a0a; color: #d6d6d6; font-family: ui-monospace, Menlo, Consolas, monospace; margin: 0; padding: 1.25rem; }
+  h1 { color: #8cf; font-size: 0.95rem; margin: 0 0 0.75rem; letter-spacing: 0.05em; }
+  .row { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; margin-bottom: 0.75rem; }
+  label { color: #8a8a8a; font-size: 0.85rem; }
+  select, button { background: #141414; color: #d6d6d6; border: 1px solid #333; padding: 0.45rem 0.7rem; font-family: inherit; font-size: 0.85rem; }
+  button { cursor: pointer; color: #8cf; }
+  button:hover { background: #1e1e1e; }
+  #log { background: #000; border: 1px solid #1c1c1c; padding: 0.9rem; white-space: pre-wrap; max-height: 75vh; overflow: auto; font-size: 0.85rem; line-height: 1.45; }
+  .status { color: #cfcf7a; }
+  .com { color: #9cc; }
+  .pick { color: #8cf; }
+  .hr { color: #444; }
+</style>
+</head>
+<body>
+<h1>checkmate-league ~/test $</h1>
+<div class="row">
+  <label for="champ">champion:</label>
+  <select id="champ"></select>
+  <button id="run">./simulate-match</button>
+</div>
+<pre id="log"></pre>
+
+<script type="module">
+import { getAllCharacters, getCharacterById } from "./src/game/characters.js";
+import { buildStatusLine, getGamePhase } from "./src/game/match-status.js";
+import { getCommentary } from "./src/game/commentary.js";
+
+// Scripted eval progression (pawn units, from own side): quiet opening, tactical
+// middlegame with ups and downs, then a decisive endgame win.
+const SCRIPTED_EVALS = [
+   0.0,  0.1,  0.2,  0.3,  0.1, -0.2, -0.4, -0.1,  0.2,  0.5,
+   0.8,  1.2,  1.8,  1.5,  0.9,  0.3, -0.4, -0.8, -0.3,  0.4,
+   1.1,  1.9,  2.6,  2.2,  1.7,  2.1,  2.8,  3.4,  3.9,  5.0,
+];
+
+// Scripted special moves by 1-based move number.
+const MOVE_TYPES = {
+  3:  "castle",
+  12: "capture",
+  17: "capture",
+  22: "check",
+  27: "promotion",
+};
+
+const champSel = document.getElementById("champ");
+for (const c of getAllCharacters()) {
+  const o = document.createElement("option");
+  o.value = c.id;
+  o.textContent = `${c.name} (${c.role}, ${c.age})`;
+  champSel.appendChild(o);
+}
+
+const logEl = document.getElementById("log");
+function write(line, cls = "") {
+  const span = document.createElement("span");
+  if (cls) span.className = cls;
+  span.textContent = line + "\n";
+  logEl.appendChild(span);
+  logEl.scrollTop = logEl.scrollHeight;
+  console.log(line);
+}
+
+document.getElementById("run").addEventListener("click", () => {
+  logEl.textContent = "";
+  const champ = getCharacterById(champSel.value);
+  write(`>> champion selected: ${champ.name} [${champ.role}, age ${champ.age}]`, "pick");
+  write(`>> traits: ${champ.traits.join(", ")} | flaws: ${champ.flaws.join(", ")} | loyalty ${champ.loyalty}`, "pick");
+  write(`>> simulating ${SCRIPTED_EVALS.length} moves ...`, "pick");
+  write("---------------------------------------------", "hr");
+
+  let prev = 0;
+  for (let i = 0; i < SCRIPTED_EVALS.length; i++) {
+    const moveNumber = i + 1;
+    const evalPawns = SCRIPTED_EVALS[i];
+    const evalDelta = +(evalPawns - prev).toFixed(2);
+    prev = evalPawns;
+    const moveType = MOVE_TYPES[moveNumber] ?? "normal";
+    const isOwnMove = moveNumber % 2 === 1;
+
+    const status = buildStatusLine({ evalPawns, moveNumber });
+    write(`[${String(moveNumber).padStart(2, "0")}] ${status}`, "status");
+
+    const commentary = getCommentary({
+      phase: getGamePhase(moveNumber),
+      evalDelta,
+      moveType,
+      isOwnMove,
+      eval: evalPawns,
+    });
+    if (commentary) write(`     > ${commentary}`, "com");
+  }
+
+  write("---------------------------------------------", "hr");
+  write(">> match finished.", "pick");
+});
+</script>
+</body>
+</html>
