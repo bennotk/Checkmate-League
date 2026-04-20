@@ -7,6 +7,11 @@
 //   row (r) = 0..7 top-to-bottom on the board (rank 8..1)
 // Isometric screen mapping uses CSS calc() against --tile-w / --tile-h, so the
 // whole board scales with its container and works at any size (incl. fullscreen).
+//
+// Move animation: the moving piece is rendered already at its destination tile,
+// but given CSS custom properties pointing back to its origin. A keyframe then
+// interpolates lift -> slide -> drop. Captured pieces get an overlay element
+// that spins off the board before vanishing.
 
 const UNICODE = {
   wK: "\u2654", wQ: "\u2655", wR: "\u2656", wB: "\u2657", wN: "\u2658", wP: "\u2659",
@@ -15,6 +20,15 @@ const UNICODE = {
 
 function fileLetter(f) { return "abcdefgh"[f]; }
 function squareName(f, r) { return fileLetter(f) + (8 - r); }
+function squareToFR(sq) {
+  const f = "abcdefgh".indexOf(sq[0]);
+  const r = 8 - parseInt(sq[1], 10);
+  return { f, r };
+}
+
+// Tracks which move we've already emitted animation markup for. Prevents
+// stray re-renders (e.g. a cast triggering patchLive) from replaying the move.
+let lastAnimatedMoveKey = null;
 
 function tileHTML(f, r, dark, highlighted, sq) {
   return `<div class="iso-tile ${dark ? "d" : "l"}${highlighted ? " hl" : ""}"
@@ -22,22 +36,42 @@ function tileHTML(f, r, dark, highlighted, sq) {
                data-sq="${sq}"></div>`;
 }
 
-function pieceHTML(piece, f, r) {
+function pieceHTML(piece, f, r, opts = {}) {
   const key = (piece.color === "w" ? "w" : "b") + piece.type.toUpperCase();
   const glyph = UNICODE[key] ?? "";
   const colorCls = piece.color === "w" ? "white" : "black";
-  return `<div class="iso-piece ${colorCls}"
-               style="--col:${f};--row:${r};"
+
+  let extraCls = "";
+  let style = `--col:${f};--row:${r};`;
+  if (opts.moving) {
+    extraCls = " is-moving";
+    // Iso deltas the keyframes interpolate against.
+    style += `--move-dcol:${opts.dCol};--move-drow:${opts.dRow};`;
+  }
+  if (opts.captured) {
+    extraCls = " is-captured";
+  }
+  return `<div class="iso-piece ${colorCls}${extraCls}"
+               style="${style}"
                data-piece="${key}">
             <span class="iso-piece-shadow"></span>
             <span class="iso-piece-glyph">${glyph}</span>
           </div>`;
 }
 
-// board: 8x8 array from chess.js (board()[row][file]); lastMove: { from, to } | null.
+// board: 8x8 array from chess.js (board()[row][file]);
+// lastMove: { from, to, color, captured? } | null.
 export function renderIsoBoardHTML(board, lastMove) {
   const tiles = [];
   const pieces = [];
+
+  const moveKey = lastMove ? `${lastMove.from}-${lastMove.to}-${lastMove.san ?? ""}` : null;
+  const animateMove = !!moveKey && moveKey !== lastAnimatedMoveKey;
+  if (animateMove) lastAnimatedMoveKey = moveKey;
+
+  let fromFR = null;
+  if (animateMove) fromFR = squareToFR(lastMove.from);
+
   for (let r = 0; r < 8; r++) {
     for (let f = 0; f < 8; f++) {
       const dark = (r + f) % 2 === 1;
@@ -45,10 +79,29 @@ export function renderIsoBoardHTML(board, lastMove) {
       const hl = !!(lastMove && (lastMove.from === sq || lastMove.to === sq));
       tiles.push(tileHTML(f, r, dark, hl, sq));
       const p = board?.[r]?.[f];
-      if (p) pieces.push(pieceHTML(p, f, r));
+      if (!p) continue;
+      const isMover = animateMove && sq === lastMove.to;
+      if (isMover) {
+        pieces.push(pieceHTML(p, f, r, {
+          moving: true,
+          dCol: fromFR.f - f,
+          dRow: fromFR.r - r,
+        }));
+      } else {
+        pieces.push(pieceHTML(p, f, r));
+      }
     }
   }
-  // iso-pieces is a sibling layer so pieces always render above tile highlights.
+
+  // Phantom captured piece: chess.js removes it from the board before we render,
+  // so we stage it back at the destination square and spin it off.
+  if (animateMove && lastMove.captured) {
+    const toFR = squareToFR(lastMove.to);
+    const capturedColor = lastMove.color === "w" ? "b" : "w";
+    const fake = { color: capturedColor, type: lastMove.captured };
+    pieces.push(pieceHTML(fake, toFR.f, toFR.r, { captured: true }));
+  }
+
   return `<div class="iso-scene">
       <div class="iso-board">${tiles.join("")}</div>
       <div class="iso-pieces">${pieces.join("")}</div>

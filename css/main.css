@@ -332,26 +332,33 @@ body.retro {
 }
 
 /* Piece: lives in the iso-pieces layer so it always sits above tile fills.
-   Anchored so the glyph appears centered on the tile's top face with a
-   small lift to suggest it is standing on the field. */
+   The container's bottom edge is placed at the tile's widest horizontal slice
+   (tile vertical midpoint) so the glyph appears to stand *on* the diamond,
+   not sink below its bottom corner. */
 .iso-piece {
   position: absolute;
   width: var(--tile-w);
   height: calc(var(--tile-w) * 1.1);
   left: calc((var(--col) - var(--row)) * (var(--tile-w) / 2) + (var(--board-w) / 2) - (var(--tile-w) / 2));
-  top:  calc((var(--col) + var(--row)) * (var(--tile-h) / 2) - (var(--tile-w) * 0.55));
+  top:  calc((var(--col) + var(--row)) * (var(--tile-h) / 2) - (var(--tile-w) * 0.85));
   display: flex;
   align-items: flex-end;
   justify-content: center;
   pointer-events: none;
 }
+/* Round, blurred ellipse sitting just under the piece's feet. */
 .iso-piece-shadow {
   position: absolute;
-  left: 15%;
-  right: 15%;
-  bottom: calc(var(--tile-w) * -0.05);
-  height: calc(var(--tile-h) * 0.45);
-  background: radial-gradient(ellipse at 50% 50%, rgba(0,0,0,0.55), transparent 70%);
+  left: 18%;
+  right: 18%;
+  bottom: calc(var(--tile-w) * 0.02);
+  height: calc(var(--tile-h) * 0.55);
+  background: radial-gradient(ellipse at 50% 50%,
+              rgba(0,0,0,0.70) 0%,
+              rgba(0,0,0,0.40) 40%,
+              rgba(0,0,0,0.0) 75%);
+  filter: blur(1px);
+  border-radius: 50%;
   pointer-events: none;
   z-index: 0;
 }
@@ -382,4 +389,42 @@ body.retro {
     0 0 2px rgba(0,0,0,0.4),
     1px 1px 0 rgba(200,255,200,0.35),
    -1px 0 0 rgba(200,255,200,0.25);
+}
+
+/* ---- Move + capture animations ----
+   The moving piece is already positioned at its destination tile. We offset
+   its transform back to the origin, then interpolate: lift -> slide -> land.
+   Captured pieces spin off-board and fade out. */
+.iso-piece.is-moving {
+  --move-dx: calc((var(--move-dcol) - var(--move-drow)) * (var(--tile-w) / 2));
+  --move-dy: calc((var(--move-dcol) + var(--move-drow)) * (var(--tile-h) / 2));
+  --hop-h: calc(var(--tile-w) * -0.45);
+  animation: iso-move 320ms cubic-bezier(0.4, 0.05, 0.5, 1) 1 both;
+  z-index: 2;
+}
+@keyframes iso-move {
+  0%   { transform: translate(var(--move-dx), var(--move-dy)); }
+  25%  { transform: translate(var(--move-dx), calc(var(--move-dy) + var(--hop-h))); }
+  75%  { transform: translate(0px, var(--hop-h)); }
+  100% { transform: translate(0, 0); }
+}
+/* Shadow tightens while the piece is airborne so the fake 3D reads. */
+.iso-piece.is-moving .iso-piece-shadow {
+  animation: iso-shadow 320ms cubic-bezier(0.4, 0.05, 0.5, 1) 1 both;
+}
+@keyframes iso-shadow {
+  0%   { transform: scale(1);   opacity: 0.9; }
+  50%  { transform: scale(0.6); opacity: 0.4; }
+  100% { transform: scale(1);   opacity: 0.9; }
+}
+
+.iso-piece.is-captured {
+  animation: iso-captured 520ms ease-in 1 both;
+  z-index: 3;
+}
+.iso-piece.is-captured .iso-piece-shadow { opacity: 0; }
+@keyframes iso-captured {
+  0%   { transform: translate(0, 0) rotate(0deg) scale(1);        opacity: 1; }
+  25%  { transform: translate(calc(var(--tile-w) *  0.4), calc(var(--tile-w) * -0.8)) rotate(240deg) scale(1.05); opacity: 1; }
+  100% { transform: translate(calc(var(--tile-w) *  1.8), calc(var(--tile-w) *  0.9)) rotate(900deg) scale(0.5);  opacity: 0; }
 }

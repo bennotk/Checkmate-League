@@ -150,7 +150,7 @@ async function tick(state) {
     state.movesSan.push(result.san);
     state.movesUci.push(bestmove);
     state.fen = chess.fen();
-    state.lastMove = { from: result.from, to: result.to, san: result.san, color: result.color };
+    state.lastMove = { from: result.from, to: result.to, san: result.san, color: result.color, captured: result.captured ?? null };
 
     // Eval white-relative. Stockfish liefert cp aus Sicht der Seite,
     // die gerade gezogen hat.
