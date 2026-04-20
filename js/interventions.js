@@ -50,13 +50,21 @@ export function applyIntervention(state, id) {
 
   const events = [];
 
-  // Buff/Debuff anlegen, wenn Dauer vorhanden
-  if (def.durationMoves > 0 && (def.selfSkillDelta || def.opponentSkillDelta)) {
+  // Buff/Debuff anlegen, wenn Dauer vorhanden und irgendeine Wirkung existiert.
+  const hasSkillEffect = def.selfSkillDelta || def.opponentSkillDelta;
+  const hasBlunderEffect = (def.selfBlunderBonus ?? 0) || (def.opponentBlunderBonus ?? 0)
+    || (def.selfBlunderMul && def.selfBlunderMul !== 1)
+    || (def.opponentBlunderMul && def.opponentBlunderMul !== 1);
+  if (def.durationMoves > 0 && (hasSkillEffect || hasBlunderEffect)) {
     state.buffs.push({
       id: def.id,
       label: def.label,
       selfSkillDelta: def.selfSkillDelta || 0,
       opponentSkillDelta: def.opponentSkillDelta || 0,
+      selfBlunderBonus: def.selfBlunderBonus ?? 0,
+      opponentBlunderBonus: def.opponentBlunderBonus ?? 0,
+      selfBlunderMul: def.selfBlunderMul ?? 1,
+      opponentBlunderMul: def.opponentBlunderMul ?? 1,
       remaining: def.durationMoves,
       source: id,
     });

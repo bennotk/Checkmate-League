@@ -340,6 +340,11 @@ function describeEffect(def) {
   const parts = [];
   if (def.selfSkillDelta) parts.push(`eigen Skill ${def.selfSkillDelta > 0 ? "+" : ""}${def.selfSkillDelta}`);
   if (def.opponentSkillDelta) parts.push(`Gegner Skill ${def.opponentSkillDelta > 0 ? "+" : ""}${def.opponentSkillDelta}`);
+  if (def.opponentBlunderBonus) parts.push(`Gegner-Fehlerchance +${Math.round(def.opponentBlunderBonus * 100)}%-P.`);
+  if (def.selfBlunderMul && def.selfBlunderMul !== 1) {
+    const pct = Math.round((1 - def.selfBlunderMul) * 100);
+    if (pct > 0) parts.push(`eigene Fehlerchance −${pct}%`);
+  }
   if (def.durationMoves) parts.push(`für ${def.durationMoves} eigene Züge`);
   if (def.id === "offerDraw") parts.push("Gegner entscheidet nach Stellung");
   return parts.join(" · ") || "Sonderwirkung";

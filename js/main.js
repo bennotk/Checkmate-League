@@ -32,6 +32,14 @@ onMatchUpdate((evt) => {
     renderTopbar(state);
     if (state.phase === "playing") patchLive(state);
   }
+  if (evt.type === "move" && evt.blunder) {
+    const mySide = evt.blunderSide === "self";
+    const hard = evt.blunderSeverity >= 0.7;
+    const msg = mySide
+      ? (hard ? "Dein Spieler patzt grob!" : "Dein Spieler vertut sich.")
+      : (hard ? "Der Gegner patzt grob!" : "Der Gegner wird ungenau.");
+    toast(msg, mySide ? "bad" : "ok");
+  }
   if (evt.type === "finished") {
     renderTopbar(state);
     routeRender();
