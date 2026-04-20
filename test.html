@@ -8,56 +8,133 @@
   body { background: #0a0a0a; color: #d6d6d6; font-family: ui-monospace, Menlo, Consolas, monospace; margin: 0; padding: 1.25rem; }
   h1 { color: #8cf; font-size: 0.95rem; margin: 0 0 0.75rem; letter-spacing: 0.05em; }
   .row { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; margin-bottom: 0.75rem; }
-  label { color: #8a8a8a; font-size: 0.85rem; }
-  select, button { background: #141414; color: #d6d6d6; border: 1px solid #333; padding: 0.45rem 0.7rem; font-family: inherit; font-size: 0.85rem; }
-  button { cursor: pointer; color: #8cf; }
+  button { background: #141414; color: #8cf; border: 1px solid #333; padding: 0.55rem 0.9rem; font-family: inherit; font-size: 0.85rem; cursor: pointer; }
   button:hover { background: #1e1e1e; }
-  #log { background: #000; border: 1px solid #1c1c1c; padding: 0.9rem; white-space: pre-wrap; max-height: 75vh; overflow: auto; font-size: 0.85rem; line-height: 1.45; }
+  button:disabled { opacity: 0.4; cursor: wait; }
+
+  .cards { display: flex; gap: 0.75rem; margin-bottom: 0.9rem; flex-wrap: wrap; }
+  .card { background: #111; border: 1px solid #2a2a2a; padding: 0.75rem 0.9rem; min-width: 220px; flex: 1 1 220px; cursor: pointer; transition: border-color 0.15s, background 0.15s; }
+  .card:hover { border-color: #444; }
+  .card.active { border-color: #8cf; background: #0d1620; }
+  .card h3 { color: #d6d6d6; font-size: 0.9rem; margin: 0 0 0.2rem; font-weight: 600; }
+  .card .role { color: #cfcf7a; font-size: 0.72rem; margin-bottom: 0.45rem; letter-spacing: 0.03em; }
+  .card .stats { font-size: 0.7rem; color: #9a9a9a; line-height: 1.55; }
+  .card .stats b { color: #d6d6d6; font-weight: 600; }
+
+  .evalbar { margin-bottom: 0.9rem; }
+  .evalbar-track { background: #000; border: 1px solid #222; height: 20px; position: relative; overflow: hidden; }
+  .evalbar-fill { position: absolute; top: 0; bottom: 0; left: 50%; width: 0; background: #8cf; transition: width 0.25s ease-out, left 0.25s ease-out, background 0.25s; }
+  .evalbar-fill.bad { background: #c66; }
+  .evalbar-fill.neutral { background: #666; }
+  .evalbar-mid { position: absolute; top: 0; bottom: 0; left: 50%; width: 1px; background: #555; z-index: 1; }
+  .evalbar-label { font-size: 0.72rem; color: #888; margin-top: 0.25rem; display: flex; justify-content: space-between; align-items: center; }
+  .evalbar-label b { color: #d6d6d6; font-weight: 600; font-size: 0.85rem; }
+
+  #log { background: #000; border: 1px solid #1c1c1c; padding: 0.9rem; white-space: pre-wrap; max-height: 50vh; overflow: auto; font-size: 0.85rem; line-height: 1.45; }
   .status { color: #cfcf7a; }
   .com { color: #9cc; }
   .pick { color: #8cf; }
+  .opening { color: #b99cdf; }
   .hr { color: #444; }
 </style>
 </head>
 <body>
-<h1>checkmate-league ~/test $</h1>
+<h1>checkmate-league ~/test $ — select champion</h1>
+
+<div class="cards" id="cards"></div>
+
+<div class="evalbar">
+  <div class="evalbar-track">
+    <div class="evalbar-mid"></div>
+    <div class="evalbar-fill" id="evalFill"></div>
+  </div>
+  <div class="evalbar-label">
+    <span>&larr; Schwarz</span>
+    <b id="evalText">+0.0</b>
+    <span>Weiß (dein Spieler) &rarr;</span>
+  </div>
+</div>
+
 <div class="row">
-  <label for="champ">champion:</label>
-  <select id="champ"></select>
   <button id="run">./simulate-match</button>
 </div>
+
 <pre id="log"></pre>
 
 <script type="module">
 import { getAllCharacters, getCharacterById } from "./src/game/characters.js";
-import { buildStatusLine, getGamePhase } from "./src/game/match-status.js";
+import { buildStatusLine, getGamePhase, getPositionAssessment } from "./src/game/match-status.js";
 import { getCommentary } from "./src/game/commentary.js";
+import { detectOpening } from "./src/game/openings.js";
 
-// Scripted eval progression (pawn units, from own side): quiet opening, tactical
-// middlegame with ups and downs, then a decisive endgame win.
+// Scripted match: Sicilian Najdorf, tactical middlegame, decisive endgame.
+const SCRIPTED_SAN = [
+  "e4",  "c5",  "Nf3", "d6",  "d4",  "cxd4", "Nxd4", "Nf6", "Nc3", "a6",
+  "Be2", "e5",  "Nb3", "Be7", "O-O", "O-O",  "Be3",  "Be6", "Qd3", "Nbd7",
+  "Rad1","Rc8", "Nd5", "Bxd5","exd5","Nb6",  "c4",   "Nfd7","f4",  "exf4",
+];
+
 const SCRIPTED_EVALS = [
    0.0,  0.1,  0.2,  0.3,  0.1, -0.2, -0.4, -0.1,  0.2,  0.5,
    0.8,  1.2,  1.8,  1.5,  0.9,  0.3, -0.4, -0.8, -0.3,  0.4,
    1.1,  1.9,  2.6,  2.2,  1.7,  2.1,  2.8,  3.4,  3.9,  5.0,
 ];
 
-// Scripted special moves by 1-based move number.
-const MOVE_TYPES = {
-  3:  "castle",
-  12: "capture",
-  17: "capture",
-  22: "check",
-  27: "promotion",
-};
-
-const champSel = document.getElementById("champ");
-for (const c of getAllCharacters()) {
-  const o = document.createElement("option");
-  o.value = c.id;
-  o.textContent = `${c.name} (${c.role}, ${c.age})`;
-  champSel.appendChild(o);
+// Derive moveType straight from the SAN string — same logic the real match would use.
+function detectMoveType(san) {
+  if (!san) return "normal";
+  if (san.startsWith("O-O")) return "castle";
+  if (san.endsWith("#")) return "checkmate";
+  if (san.endsWith("+")) return "check";
+  if (san.includes("=")) return "promotion";
+  if (san.includes("x")) return "capture";
+  return "normal";
 }
 
+// --- character cards ---
+let selectedId = getAllCharacters()[0].id;
+const cardsEl = document.getElementById("cards");
+function renderCards() {
+  cardsEl.innerHTML = "";
+  for (const c of getAllCharacters()) {
+    const card = document.createElement("div");
+    card.className = "card" + (c.id === selectedId ? " active" : "");
+    card.innerHTML = `
+      <h3>${c.name}</h3>
+      <div class="role">${c.role.toUpperCase()} &middot; age ${c.age} &middot; loyalty ${c.loyalty}</div>
+      <div class="stats">
+        <b>Opening</b> ${c.stats.opening} &middot; <b>Mid</b> ${c.stats.middlegame} &middot; <b>End</b> ${c.stats.endgame}<br/>
+        <b>Condition</b> ${c.stats.condition} &middot; <b>Nerves</b> ${c.stats.nerves} &middot; <b>Presence</b> ${c.stats.presence}<br/>
+        <b>Traits</b> ${c.traits.join(", ")}<br/>
+        <b>Flaws</b> ${c.flaws.join(", ")}
+      </div>`;
+    card.addEventListener("click", () => { selectedId = c.id; renderCards(); });
+    cardsEl.appendChild(card);
+  }
+}
+renderCards();
+
+// --- eval bar ---
+const evalFill = document.getElementById("evalFill");
+const evalText = document.getElementById("evalText");
+function updateEvalBar(evalPawns) {
+  const clamped = Math.max(-5, Math.min(5, evalPawns));
+  const pct = Math.abs(clamped) / 5 * 50;
+  if (clamped >= 0) {
+    evalFill.style.left = "50%";
+    evalFill.style.width = pct + "%";
+  } else {
+    evalFill.style.left = (50 - pct) + "%";
+    evalFill.style.width = pct + "%";
+  }
+  const { tone } = getPositionAssessment(evalPawns);
+  const cls = tone.includes("bad") ? "bad" : tone === "neutral" ? "neutral" : "";
+  evalFill.className = "evalbar-fill " + cls;
+  evalText.textContent = (evalPawns >= 0 ? "+" : "") + evalPawns.toFixed(1);
+}
+updateEvalBar(0);
+
+// --- log ---
 const logEl = document.getElementById("log");
 function write(line, cls = "") {
   const span = document.createElement("span");
@@ -68,38 +145,53 @@ function write(line, cls = "") {
   console.log(line);
 }
 
-document.getElementById("run").addEventListener("click", () => {
+// --- simulate loop ---
+const runBtn = document.getElementById("run");
+runBtn.addEventListener("click", async () => {
   logEl.textContent = "";
-  const champ = getCharacterById(champSel.value);
+  runBtn.disabled = true;
+  const champ = getCharacterById(selectedId);
   write(`>> champion selected: ${champ.name} [${champ.role}, age ${champ.age}]`, "pick");
-  write(`>> traits: ${champ.traits.join(", ")} | flaws: ${champ.flaws.join(", ")} | loyalty ${champ.loyalty}`, "pick");
+  write(`>> traits: ${champ.traits.join(", ")} | flaws: ${champ.flaws.join(", ")}`, "pick");
   write(`>> simulating ${SCRIPTED_EVALS.length} moves ...`, "pick");
   write("---------------------------------------------", "hr");
 
+  updateEvalBar(0);
   let prev = 0;
+  let lastOpeningName = null;
+
   for (let i = 0; i < SCRIPTED_EVALS.length; i++) {
     const moveNumber = i + 1;
+    const san = SCRIPTED_SAN[i] ?? "?";
     const evalPawns = SCRIPTED_EVALS[i];
     const evalDelta = +(evalPawns - prev).toFixed(2);
     prev = evalPawns;
-    const moveType = MOVE_TYPES[moveNumber] ?? "normal";
+    const moveType = detectMoveType(san);
     const isOwnMove = moveNumber % 2 === 1;
 
+    updateEvalBar(evalPawns);
+
     const status = buildStatusLine({ evalPawns, moveNumber });
-    write(`[${String(moveNumber).padStart(2, "0")}] ${status}`, "status");
+    write(`[${String(moveNumber).padStart(2, "0")}] ${san.padEnd(6)} ${status}`, "status");
+
+    const opening = detectOpening(SCRIPTED_SAN.slice(0, moveNumber));
+    if (opening && opening.name !== lastOpeningName) {
+      write(`     [book] ${opening.eco} ${opening.name}`, "opening");
+      lastOpeningName = opening.name;
+    }
 
     const commentary = getCommentary({
       phase: getGamePhase(moveNumber),
-      evalDelta,
-      moveType,
-      isOwnMove,
-      eval: evalPawns,
+      evalDelta, moveType, isOwnMove, eval: evalPawns,
     });
     if (commentary) write(`     > ${commentary}`, "com");
+
+    await new Promise((r) => setTimeout(r, 350));
   }
 
   write("---------------------------------------------", "hr");
   write(">> match finished.", "pick");
+  runBtn.disabled = false;
 });
 </script>
 </body>
