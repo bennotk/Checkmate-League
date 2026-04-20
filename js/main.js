@@ -66,16 +66,21 @@ document.addEventListener("click", async (e) => {
       break;
     }
     case "new-match": {
-      const keepId = state?.selectedChampionId;
+      const keepLeft  = state?.leftChampionId;
+      const keepRight = state?.rightChampionId;
       state = createInitialState();
-      if (keepId) state.selectedChampionId = keepId;
+      if (keepLeft)  state.leftChampionId  = keepLeft;
+      if (keepRight) state.rightChampionId = keepRight;
       saveState(state);
       renderTopbar(state);
       renderPreGame(state);
       break;
     }
     case "select-champion": {
-      state.selectedChampionId = t.dataset.id;
+      const side = t.dataset.side;
+      const id = t.dataset.id;
+      if (side === "left")  state.leftChampionId  = id;
+      if (side === "right") state.rightChampionId = id;
       saveState(state);
       renderPreGame(state);
       break;

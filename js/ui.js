@@ -73,10 +73,12 @@ export function renderTopbar(state) {
 
 // ---- Pre-Game ----
 export function renderPreGame(state) {
-  const selectedId = state?.selectedChampionId ?? getAllCharacters()[0].id;
-  const cardsHtml = getAllCharacters().map((c) => `
-    <button class="champion-card${c.id === selectedId ? " is-active" : ""}"
-            data-action="select-champion" data-id="${esc(c.id)}">
+  const leftId  = state?.leftChampionId  ?? getAllCharacters()[0].id;
+  const rightId = state?.rightChampionId ?? getAllCharacters()[1]?.id ?? leftId;
+
+  const cardHtml = (c, side, activeId) => `
+    <button class="champion-card${c.id === activeId ? " is-active" : ""}"
+            data-action="select-champion" data-side="${side}" data-id="${esc(c.id)}">
       <div class="champion-head">
         <span class="champion-name">${esc(c.name)}</span>
         <span class="champion-role">${esc(c.role)} · ${c.age}</span>
@@ -93,7 +95,11 @@ export function renderPreGame(state) {
         + ${esc(c.traits.join(", ") || "—")}<br/>
         − ${esc(c.flaws.join(", ") || "—")}
       </div>
-    </button>`).join("");
+    </button>`;
+
+  const cards = getAllCharacters();
+  const leftRow  = cards.map((c) => cardHtml(c, "left",  leftId)).join("");
+  const rightRow = cards.map((c) => cardHtml(c, "right", rightId)).join("");
 
   $("#view").innerHTML = `
     <div class="term">
@@ -102,25 +108,28 @@ export function renderPreGame(state) {
       <div class="dim">&gt; subject: single match, first prototype</div>
       <div class="hr"></div>
       <p>Du bist nicht der Schachspieler. Du bist sein <span class="hl">Manager</span>.</p>
-      <p>Dein Spieler sitzt am Brett. Du sitzt im Publikum und beeinflusst die Partie indirekt.</p>
+      <p>Wähle deinen Champion und einen Gegner. Die Farbverteilung wird beim Start ausgelost.</p>
 
-      <h3 class="section-title">Champion auswählen</h3>
-      <div class="champion-cards">${cardsHtml}</div>
+      <h3 class="section-title">Dein Spieler</h3>
+      <div class="champion-cards">${leftRow}</div>
+
+      <h3 class="section-title">Gegner</h3>
+      <div class="champion-cards">${rightRow}</div>
 
       <div class="hr"></div>
       <div class="kv">
-        <div>Start-Skill (Weiß/Schwarz)</div><div>${CONFIG.startSkillPlayer} / ${CONFIG.startSkillOpponent}</div>
+        <div>Skill-Modell</div><div>Champion-Stats × Phase (0..100 → Skill 0..20)</div>
         <div>Ressourcen</div><div>${CONFIG.startResources}</div>
         <div>Heat-Limit</div><div>${CONFIG.heatMax}</div>
       </div>
       <ul class="term-list">
-        <li>Ressourcen sind knapp — jede Intervention kostet.</li>
+        <li>Eröffnungs-/Mittelspiel-/Endspiel-Stat deines Champions steuert die Engine-Stärke in der jeweiligen Phase.</li>
         <li>Heat steigt bei jedem Eingriff. Bei ${CONFIG.heatMax} wirst du disqualifiziert.</li>
         <li>Ab Zug ${CONFIG.drawEarliestMove} kannst du ein Remis anbieten.</li>
       </ul>
       <div class="hr"></div>
       <button class="btn primary" data-action="start-match">[ START MATCH ]</button>
-      <span class="dim small">&nbsp;&nbsp;(lädt Stockfish-Engine beim ersten Klick; kann einen Moment dauern)</span>
+      <span class="dim small">&nbsp;&nbsp;(lädt Stockfish beim ersten Klick; kann einen Moment dauern)</span>
     </div>`;
 }
 
@@ -129,15 +138,20 @@ export function renderLiveMatch(state) {
   const skills = effectiveSkills(state);
   const heatPct = Math.min(100, state.heat);
   const heatCls = state.heat >= CONFIG.heatMax ? "bad" : state.heat >= CONFIG.heatWarnThreshold ? "warn" : "ok";
-  const champ = getCharacterById(state.selectedChampionId);
-  const champName = champ?.name ?? "Mein Spieler";
+  const myChamp  = getCharacterById(state.leftChampionId);
+  const oppChamp = getCharacterById(state.rightChampionId);
+  const myName   = myChamp?.name  ?? "Mein Spieler";
+  const oppName  = oppChamp?.name ?? "Gegner";
+  const myColor  = state.managerIsWhite ? "Weiß" : "Schwarz";
+  const oppColor = state.managerIsWhite ? "Schwarz" : "Weiß";
   const eb = evalBarGeom(state.evalPawns ?? 0);
 
   $("#view").innerHTML = `
     <div class="match-grid">
       <section class="panel player-panel">
-        <h3>${esc(champName.toUpperCase())} · Weiß</h3>
-        <div class="stat"><span>Skill</span><b id="pnSkill">${skills.self}</b><span class="small dim">/20</span></div>
+        <h3>${esc(myName.toUpperCase())} · ${myColor}</h3>
+        <div class="small dim">${esc(myChamp?.role ?? "")}</div>
+        <div class="stat"><span id="pnSkillLabel">Skill (${skills.phase})</span><b id="pnSkill">${skills.self}</b><span class="small dim">/20</span></div>
         <div class="stat"><span>Ressourcen</span><b id="pnRes">${state.resources}</b></div>
         <div class="stat"><span>Heat</span><b id="pnHeat" class="${heatCls}">${state.heat}</b></div>
         <div class="meter"><i id="pnHeatBar" class="${heatCls}" style="width:${heatPct}%"></i></div>
@@ -175,8 +189,9 @@ export function renderLiveMatch(state) {
       </section>
 
       <section class="panel opp-panel">
-        <h3>GEGNER · Schwarz</h3>
-        <div class="stat"><span>Skill</span><b id="pnOppSkill">${skills.opponent}</b><span class="small dim">/20</span></div>
+        <h3>${esc(oppName.toUpperCase())} · ${oppColor}</h3>
+        <div class="small dim">${esc(oppChamp?.role ?? "")}</div>
+        <div class="stat"><span id="pnOppSkillLabel">Skill (${skills.phase})</span><b id="pnOppSkill">${skills.opponent}</b><span class="small dim">/20</span></div>
         <div class="stat"><span>Status</span><b id="pnOppStatus">${oppStatus(state)}</b></div>
         <div class="hr"></div>
         <h3>AKTIVE DEBUFFS</h3>
@@ -301,6 +316,8 @@ export function patchLive(state) {
   const eb = evalBarGeom(state.evalPawns ?? 0);
   byId("pnSkill", (el) => el.textContent = skills.self);
   byId("pnOppSkill", (el) => el.textContent = skills.opponent);
+  byId("pnSkillLabel", (el) => el.textContent = `Skill (${skills.phase})`);
+  byId("pnOppSkillLabel", (el) => el.textContent = `Skill (${skills.phase})`);
   byId("pnRes", (el) => el.textContent = state.resources);
   byId("pnHeat", (el) => { el.textContent = state.heat; el.className = heatCls; });
   byId("pnHeatBar", (el) => { el.style.width = `${heatPct}%`; el.className = heatCls; });

@@ -1,8 +1,7 @@
 // Match-Orchestrator. Verwaltet:
 //   - eine chess.js-Instanz fuer Regeln und Notation
-//   - zwei Stockfish-Worker (mein Spieler / Gegner)
-//   - den Tick-Loop (abhaengig von state.speed)
-//   - Skill-Updates vor jedem eigenen Zug (basierend auf aktiven Buffs)
+//   - zwei Stockfish-Worker (weiss / schwarz), pro Zug Skill aus Champion-Stats
+//   - Tick-Loop (abhaengig von state.speed)
 //   - Remis-Anfrage-Logik
 //
 // UI-Updates laufen ueber Callbacks; match.js weiss nichts vom DOM.
@@ -10,8 +9,9 @@
 import { CONFIG } from "./config.js";
 import { StockfishEngine } from "./stockfish-engine.js";
 import {
-  log, effectiveSkills, decrementBuffsAfterOwnMove, saveState,
+  log, effectiveSkills, engineSkills, decrementBuffsAfterOwnMove, saveState,
 } from "./state.js";
+import { getCharacterById } from "../src/game/characters.js";
 import { getGamePhase } from "../src/game/match-status.js";
 import { getCommentary } from "../src/game/commentary.js";
 import { detectOpening } from "../src/game/openings.js";
@@ -26,13 +26,13 @@ function detectMoveType(san) {
   return "normal";
 }
 
-let player = null;   // StockfishEngine Weiss
-let opponent = null; // StockfishEngine Schwarz
-let chess = null;    // chess.js instance
+let whiteEngine = null;
+let blackEngine = null;
+let chess = null;
 let tickTimer = null;
 let listeners = new Set();
 let running = false;
-let drawPending = false;  // true, waehrend wir auf Entscheidung warten
+let drawPending = false;
 
 export function onMatchUpdate(cb) {
   listeners.add(cb);
@@ -42,7 +42,7 @@ function emit(evt) { for (const cb of listeners) cb(evt); }
 
 export async function startMatch(state) {
   if (!window.Chess) throw new Error("chess.js nicht geladen");
-  await stopMatch(); // cleanup falls noch was laeuft
+  await stopMatch();
 
   chess = new window.Chess();
   state.fen = chess.fen();
@@ -62,17 +62,26 @@ export async function startMatch(state) {
   state.openingEco = null;
   state.openingName = null;
   state.log = [];
-  log(state, "Partie startet. Viel Erfolg, Herr Manager.", "ok");
 
-  player = new StockfishEngine({ path: "vendor/stockfish.js", label: "player" });
-  opponent = new StockfishEngine({ path: "vendor/stockfish.js", label: "opponent" });
+  // Farbwahl per Muenzwurf.
+  state.managerIsWhite = Math.random() < 0.5;
+  state.whiteChampionId = state.managerIsWhite ? state.leftChampionId : state.rightChampionId;
+  state.blackChampionId = state.managerIsWhite ? state.rightChampionId : state.leftChampionId;
+  const myChamp  = getCharacterById(state.leftChampionId);
+  const oppChamp = getCharacterById(state.rightChampionId);
+  log(state, `Auslosung: dein Spieler spielt ${state.managerIsWhite ? "Weiß" : "Schwarz"}.`, "info");
+  log(state, `${myChamp?.name ?? "Mein Spieler"} vs ${oppChamp?.name ?? "Gegner"} — Partie startet.`, "ok");
+
+  whiteEngine = new StockfishEngine({ path: "vendor/stockfish.js", label: "white" });
+  blackEngine = new StockfishEngine({ path: "vendor/stockfish.js", label: "black" });
 
   emit({ type: "starting" });
-  await Promise.all([player.ready, opponent.ready]);
-  player.newGame();
-  opponent.newGame();
-  player.setSkillLevel(effectiveSkills(state).self);
-  opponent.setSkillLevel(effectiveSkills(state).opponent);
+  await Promise.all([whiteEngine.ready, blackEngine.ready]);
+  whiteEngine.newGame();
+  blackEngine.newGame();
+  const skills = engineSkills(state);
+  whiteEngine.setSkillLevel(skills.white);
+  blackEngine.setSkillLevel(skills.black);
   emit({ type: "ready" });
 
   running = true;
@@ -82,8 +91,8 @@ export async function startMatch(state) {
 export async function stopMatch() {
   running = false;
   if (tickTimer) { clearTimeout(tickTimer); tickTimer = null; }
-  if (player) { player.destroy(); player = null; }
-  if (opponent) { opponent.destroy(); opponent = null; }
+  if (whiteEngine) { whiteEngine.destroy(); whiteEngine = null; }
+  if (blackEngine) { blackEngine.destroy(); blackEngine = null; }
   chess = null;
   drawPending = false;
 }
@@ -98,35 +107,32 @@ async function tick(state) {
   if (state.phase !== "playing") return;
   if (drawPending) { scheduleTick(state, 200); return; }
 
-  // Pause?
   if (state.speed === 0) { scheduleTick(state, 200); return; }
 
-  // Heat 100 -> Disqualifikation (sollte vorher schon ausgeloest werden beim Cast,
-  // aber als Safety-Net hier auch.)
   if (state.heat >= CONFIG.heatMax) {
     finishMatch(state, { outcome: "dq", reason: "Disqualifiziert — Heat auf 100." });
     return;
   }
 
-  // Game-Over check
   if (chess.isGameOver()) {
     finalizeByBoard(state);
     return;
   }
 
   const turn = chess.turn(); // 'w' | 'b'
-  const myTurn = turn === "w";
-  const engine = myTurn ? player : opponent;
+  const whiteTurn = turn === "w";
+  const engine = whiteTurn ? whiteEngine : blackEngine;
+  const isManagerPlayersMove = whiteTurn === state.managerIsWhite;
 
-  // Skill vor jedem Zug setzen (Buffs koennten sich geaendert haben)
-  const skills = effectiveSkills(state);
-  if (myTurn) engine.setSkillLevel(skills.self);
-  else engine.setSkillLevel(skills.opponent);
+  // Skill pro Zug neu setzen: Champion-Stats skalieren mit der Phase,
+  // Buffs aendern sich durch Casts. Beide Seiten aktualisieren.
+  const skills = engineSkills(state);
+  whiteEngine.setSkillLevel(skills.white);
+  blackEngine.setSkillLevel(skills.black);
 
   try {
     const { bestmove, cp, mate } = await engine.go(chess.fen(), CONFIG.movetimeMs);
     if (!bestmove || bestmove === "(none)") {
-      // keine Antwort: sollte nur bei GameOver passieren
       finalizeByBoard(state);
       return;
     }
@@ -146,31 +152,30 @@ async function tick(state) {
     state.fen = chess.fen();
     state.lastMove = { from: result.from, to: result.to, san: result.san, color: result.color };
 
-    // Eval aus Sicht von Weiss (= mein Spieler) speichern.
-    // Stockfish liefert cp aus Sicht der Seite, die am Zug war (= die gerade gezogen hat).
+    // Eval white-relative. Stockfish liefert cp aus Sicht der Seite,
+    // die gerade gezogen hat.
     const prevEval = state.evals[state.evals.length - 1] ?? 0;
     let evalPawns;
     if (mate != null) {
-      // forced mate: riesiger Betrag, korrektes Vorzeichen
-      const cpWhiteMate = (myTurn ? 1 : -1) * (mate > 0 ? 10000 : -10000);
+      const cpWhiteMate = (whiteTurn ? 1 : -1) * (mate > 0 ? 10000 : -10000);
       evalPawns = cpWhiteMate / 100;
     } else {
-      const cpWhite = myTurn ? cp : -cp;
+      const cpWhite = whiteTurn ? cp : -cp;
       evalPawns = cpWhite / 100;
     }
     state.evals.push(evalPawns);
     state.evalPawns = evalPawns;
     const evalDelta = +(evalPawns - prevEval).toFixed(2);
 
-    if (myTurn) {
+    if (isManagerPlayersMove) {
       state.myMovesMade++;
-      // Buffs laufen nach meinem Zug einen Tick runter
       decrementBuffsAfterOwnMove(state);
-    } else {
+    }
+    if (!whiteTurn) {
       state.fullMoveNumber++;
     }
 
-    // Eroeffnungserkennung, nur so lange relevant wie die Buecherei reicht.
+    // Eroeffnungserkennung waehrend der Buch-Phase.
     if (state.movesSan.length <= 25) {
       const op = detectOpening(state.movesSan);
       if (op && op.name !== state.openingName) {
@@ -180,17 +185,16 @@ async function tick(state) {
       }
     }
 
-    // Kommentator
     const commentary = getCommentary({
       phase: getGamePhase(state.fullMoveNumber),
       evalDelta,
       moveType: detectMoveType(result.san),
-      isOwnMove: myTurn,
+      isOwnMove: isManagerPlayersMove,
       eval: evalPawns,
     });
     if (commentary) log(state, commentary, "dim");
 
-    emit({ type: "move", move: result, myTurn });
+    emit({ type: "move", move: result, myTurn: isManagerPlayersMove });
     saveState(state);
 
     if (chess.isGameOver()) {
@@ -198,7 +202,6 @@ async function tick(state) {
       return;
     }
 
-    // Naechster Tick - respektiert Geschwindigkeit
     const delay = CONFIG.speedIntervalsMs[state.speed] ?? 800;
     scheduleTick(state, Math.max(30, delay));
   } catch (err) {
@@ -213,8 +216,9 @@ function finalizeByBoard(state) {
   let reason = "Remis nach Regel.";
   if (chess.isCheckmate()) {
     const loserIsWhite = chess.turn() === "w";
-    outcome = loserIsWhite ? "loss" : "win";
-    reason = loserIsWhite ? "Matt — du verlierst." : "Matt — du gewinnst!";
+    const managerLost = loserIsWhite === state.managerIsWhite;
+    outcome = managerLost ? "loss" : "win";
+    reason = managerLost ? "Matt — du verlierst." : "Matt — du gewinnst!";
   } else if (chess.isStalemate()) reason = "Patt.";
   else if (chess.isThreefoldRepetition()) reason = "Dreifache Stellungswiederholung.";
   else if (chess.isInsufficientMaterial()) reason = "Unzureichendes Material.";
@@ -229,32 +233,25 @@ export function finishMatch(state, result) {
   if (tickTimer) { clearTimeout(tickTimer); tickTimer = null; }
   log(state, `Partie beendet: ${result.reason}`, result.outcome === "win" ? "ok" : (result.outcome === "loss" || result.outcome === "dq" ? "bad" : "warn"));
   saveState(state);
-  // Engines laufen wir aus, behalten sie aber fuer Rematch.
   emit({ type: "finished", result });
 }
 
-// Remis anbieten: Gegner evaluiert aktuelle Stellung, wir rechnen Acceptance.
-// Nicht-blockierend aus Sicht des Spielers (UI zeigt "Warte..." Modal).
+// Remis-Anfrage: der Gegner-Engine evaluiert die Stellung.
 export async function offerDraw(state) {
-  if (!opponent || !chess) return { accepted: false, reason: "keine Partie" };
+  const opponentEngine = state.managerIsWhite ? blackEngine : whiteEngine;
+  if (!opponentEngine || !chess) return { accepted: false, reason: "keine Partie" };
   if (state.phase !== "playing") return { accepted: false, reason: "Partie laeuft nicht" };
   if (drawPending) return { accepted: false, reason: "bereits gestellt" };
 
   drawPending = true;
   emit({ type: "draw-offered" });
 
-  // Evaluation aus Gegner-Sicht ist vorzeichenumgekehrt zum Schwarz-am-Zug-Score.
-  // Unabhaengig davon: wir evaluieren und rechnen Remis-Akzeptanz.
-  const { cp } = await opponent.evaluate(chess.fen(), CONFIG.evalDepth);
-  // Stockfish gibt cp immer aus Sicht der Seite, die am Zug ist.
+  const { cp } = await opponentEngine.evaluate(chess.fen(), CONFIG.evalDepth);
   const turn = chess.turn();
-  // cp aus Weiss-Sicht
   const cpWhite = turn === "w" ? cp : -cp;
-  // aus Gegner-Sicht (Schwarz): positives heisst Gegner besser
-  const evalPawnsOpp = -cpWhite / 100;
 
-  // Regel: wenn unsere Stellung zu schlecht ist, duerfen wir gar nicht erst anbieten.
-  const ourEvalPawns = cpWhite / 100;
+  // Unsere Stellung aus Weiss-Sicht, dann auf Manager-Sicht mappen.
+  const ourEvalPawns = (state.managerIsWhite ? 1 : -1) * cpWhite / 100;
   if (ourEvalPawns < -CONFIG.drawMaxLossToOffer) {
     drawPending = false;
     log(state, `Remis-Angebot unterbunden — du stehst klar schlechter.`, "warn");
@@ -262,7 +259,8 @@ export async function offerDraw(state) {
     return { accepted: false, reason: "Stellung zu schlecht fuer Remis-Angebot" };
   }
 
-  // Formel
+  // Gegner-Sicht: positiv = Gegner besser. Das ist -ourEvalPawns.
+  const evalPawnsOpp = -ourEvalPawns;
   const f = CONFIG.drawFormula;
   const p = Math.max(f.floor, Math.min(f.ceiling, f.base + f.slope * evalPawnsOpp));
   const roll = Math.random();
@@ -279,6 +277,5 @@ export async function offerDraw(state) {
   return { accepted: false, probability: p };
 }
 
-// Zugriff fuer UI, rein lesend.
 export function getBoardState() { return chess ? chess.board() : null; }
 export function getChess() { return chess; }

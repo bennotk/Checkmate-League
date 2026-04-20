@@ -1,49 +1,48 @@
-// Globaler Match-Zustand. Kein Liga/Transfer-Kram mehr.
-// Eine Instanz fuer eine laufende Partie; bei "Neue Partie" wird alles geresettet.
+// Globaler Match-Zustand. Eine Instanz pro Partie; bei "Neue Partie" wird
+// alles geresettet.
 
 import { CONFIG } from "./config.js";
+import { getCharacterById, getAllCharacters } from "../src/game/characters.js";
+import { getGamePhase } from "../src/game/match-status.js";
 
 export const STORAGE_KEY = "checkmate-league-match-v2";
 
 export function createInitialState() {
   return {
     version: 2,
-    phase: "pregame",       // "pregame" | "playing" | "finished"
-    result: null,           // { outcome: "win"|"loss"|"draw"|"dq", reason: string } bei phase "finished"
-    speed: 1,               // 0 | 1 | 4 | 16
+    phase: "pregame",
+    result: null,
+    speed: 1,
 
-    // Champion-Auswahl (Pregame)
-    selectedChampionId: "volkov",
+    // Beide Champions stehen vor dem Match fest; Farbe wird bei startMatch ausgelost.
+    leftChampionId: "volkov",     // "Mein Spieler" aus Manager-Sicht
+    rightChampionId: "petrov",    // Gegner
 
-    // Ressourcen / Heat
+    // Wird bei startMatch gesetzt.
+    managerIsWhite: true,
+    whiteChampionId: null,
+    blackChampionId: null,
+
     resources: CONFIG.startResources,
     heat: CONFIG.startHeat,
 
-    // Buffs auf beiden Seiten. Jeder Eintrag:
-    // { id, source, selfSkillDelta, opponentSkillDelta, remaining (eigene Zuege), label }
     buffs: [],
+    castLog: {},
 
-    // Cast-Historie fuer "oncePerGame"-Checks
-    castLog: {},            // { [interventionId]: count }
-
-    // Schachzustand
     fen: "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
-    movesSan: [],           // full SAN list
-    movesUci: [],           // full UCI list (fuer "position fen ... moves ..." waere moeglich)
-    fullMoveNumber: 1,      // 1-basiert
-    myMovesMade: 0,         // wie viele Zuege mein Spieler schon gemacht hat
-    lastMove: null,         // { from, to, san, color }
+    movesSan: [],
+    movesUci: [],
+    fullMoveNumber: 1,
+    myMovesMade: 0,
+    lastMove: null,
 
-    // Engine-Status fuer Statuszeile / Eval-Bar / Eroeffnungserkennung
     evalPawns: 0,
-    evals: [],              // white-relative Evaluierungen pro Halbzug
+    evals: [],
     openingEco: null,
     openingName: null,
 
-    // Log-Eintraege fuer UI ("Narration")
     log: [],
 
-    // RNG-Seed fuer deterministische "Entdeckung"-Rolls (optional, rein zufaellig ok)
     _seed: Math.floor(Math.random() * 1e9),
   };
 }
@@ -58,7 +57,7 @@ export function log(state, text, kind = "info") {
   if (state.log.length > 60) state.log.pop();
 }
 
-// --------- Save/Load (optional) ---------
+// --------- Save/Load ---------
 export function saveState(state) {
   try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch {}
 }
@@ -70,7 +69,11 @@ export function loadState() {
     if (!parsed || parsed.version !== 2) return null;
     // Backfill fields added after the v2 schema shipped; saves that predate
     // these features would otherwise crash the tick loop with undefined.
-    parsed.selectedChampionId ??= "volkov";
+    parsed.leftChampionId ??= parsed.selectedChampionId ?? "volkov";
+    parsed.rightChampionId ??= pickDifferentChampion(parsed.leftChampionId);
+    parsed.managerIsWhite ??= true;
+    parsed.whiteChampionId ??= null;
+    parsed.blackChampionId ??= null;
     parsed.evalPawns ??= 0;
     parsed.evals ??= [];
     parsed.openingEco ??= null;
@@ -80,17 +83,51 @@ export function loadState() {
 }
 export function deleteSave() { try { localStorage.removeItem(STORAGE_KEY); } catch {} }
 
+function pickDifferentChampion(notId) {
+  const all = getAllCharacters();
+  return (all.find((c) => c.id !== notId) ?? all[0]).id;
+}
+
 // --------- Derived Skill ---------
-// Effektiver Skill beider Seiten nach Buffs. Clamped auf [0, 20].
+// Champion-Stat (0..100) -> Stockfish Skill (0..20) mit linearer Abbildung.
+function statToSkill(stat) {
+  const s = typeof stat === "number" ? stat : 50;
+  return Math.max(CONFIG.skillMin, Math.min(CONFIG.skillMax, Math.round(s / 5)));
+}
+
+// Basis-Skill eines Champions fuer die aktuelle Spielphase.
+function championBaseSkill(champ, phase) {
+  if (!champ) return Math.round((CONFIG.startSkillPlayer ?? 8));
+  const key = phase === "middlegame" ? "middlegame"
+           : phase === "endgame"   ? "endgame"
+           :                          "opening";
+  return statToSkill(champ.stats?.[key]);
+}
+
+// Manager-orientierte Sicht: self = unser Champion, opponent = Gegner-Champion.
+// Buffs wirken auf self/opponent. Phase wird aus fullMoveNumber abgeleitet.
 export function effectiveSkills(state) {
-  let self = CONFIG.startSkillPlayer;
-  let opp = CONFIG.startSkillOpponent;
+  const phase = getGamePhase(state.fullMoveNumber ?? 1);
+  const self = getCharacterById(state.leftChampionId);
+  const opp  = getCharacterById(state.rightChampionId);
+  let selfSkill = championBaseSkill(self, phase);
+  let oppSkill  = championBaseSkill(opp,  phase);
   for (const b of state.buffs) {
-    self += b.selfSkillDelta || 0;
-    opp += b.opponentSkillDelta || 0;
+    selfSkill += b.selfSkillDelta || 0;
+    oppSkill  += b.opponentSkillDelta || 0;
   }
   const clamp = (v) => Math.max(CONFIG.skillMin, Math.min(CONFIG.skillMax, v));
-  return { self: clamp(self), opponent: clamp(opp) };
+  return { self: clamp(selfSkill), opponent: clamp(oppSkill), phase };
+}
+
+// Engine-orientierte Sicht: Stockfish-Instanz pro Farbe. Mappt die
+// Manager-Skills ({self, opponent}) auf {white, black} anhand managerIsWhite.
+export function engineSkills(state) {
+  const s = effectiveSkills(state);
+  const managerIsWhite = state.managerIsWhite !== false;
+  return managerIsWhite
+    ? { white: s.self,    black: s.opponent, phase: s.phase }
+    : { white: s.opponent, black: s.self,    phase: s.phase };
 }
 
 // Nur aktive Buffs verbleiben; tickt Dauer nach einem eigenen Zug.
