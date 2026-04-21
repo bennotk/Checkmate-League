@@ -318,10 +318,10 @@ body.retro {
 }
 
 .iso-scene {
-  /* Tile size derived from the wrapper via container-query units so the board
-     fills exactly, whether we're inside the match panel or in fullscreen.
-     100cqw / 8 = one tile width; 100cqh / 4 = same at 2:1 aspect. */
-  --tile-w: min(calc(100cqw / 8), calc(100cqh / 4));
+  /* Tile size derived from the wrapper via container-query units. We reserve
+     a bit of margin around the board for the file / rank labels by inflating
+     the divisors — 100cqw/9 leaves a half-tile gap on either side. */
+  --tile-w: min(calc(100cqw / 9), calc(100cqh / 4.8));
   --tile-h: calc(var(--tile-w) / 2);
   --board-w: calc(var(--tile-w) * 8);
   --board-h: calc(var(--tile-h) * 8);
@@ -335,10 +335,40 @@ body.retro {
 }
 
 .iso-board,
-.iso-pieces {
+.iso-pieces,
+.iso-labels {
   position: absolute;
   inset: 0;
   pointer-events: none;
+}
+
+/* File (a-h) labels sit centered under each file's rank-1 tile.
+   Rank (8-1) labels sit to the left of each row's file-a tile.
+   Both use the same tile-w / tile-h math as the tiles so they scale cleanly. */
+.iso-file-label {
+  position: absolute;
+  width: var(--tile-w);
+  text-align: center;
+  left: calc((var(--col) - 7) * (var(--tile-w) / 2) + (var(--board-w) / 2) - (var(--tile-w) / 2));
+  top:  calc((var(--col) + 7) * (var(--tile-h) / 2) + var(--tile-h) + 4px);
+  font-size: calc(var(--tile-w) * 0.28);
+  line-height: 1;
+  color: var(--ink-dim);
+  letter-spacing: 0.1em;
+}
+.iso-rank-label {
+  position: absolute;
+  width: var(--tile-w);
+  height: var(--tile-h);
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding-right: calc(var(--tile-w) * 0.12);
+  left: calc((var(--board-w) / 2) - (var(--row) * var(--tile-w) / 2) - (var(--tile-w) * 1.5));
+  top:  calc(var(--row) * (var(--tile-h) / 2));
+  font-size: calc(var(--tile-w) * 0.28);
+  line-height: 1;
+  color: var(--ink-dim);
 }
 
 /* Tile: a rectangle clipped into a diamond via clip-path, positioned with

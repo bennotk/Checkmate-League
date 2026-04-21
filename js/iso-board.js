@@ -62,6 +62,25 @@ function pieceHTML(piece, f, r, opts = {}) {
           </div>`;
 }
 
+// File labels (a..h) sit under the rank-1 row; rank labels (8..1) sit left of
+// the file-a column. Positions use the same iso math as tiles so everything
+// lines up at any zoom level.
+function renderFileLabelsHTML() {
+  const files = "abcdefgh";
+  let html = "";
+  for (let f = 0; f < 8; f++) {
+    html += `<span class="iso-file-label" style="--col:${f};">${files[f]}</span>`;
+  }
+  return html;
+}
+function renderRankLabelsHTML() {
+  let html = "";
+  for (let r = 0; r < 8; r++) {
+    html += `<span class="iso-rank-label" style="--row:${r};">${8 - r}</span>`;
+  }
+  return html;
+}
+
 // board: 8x8 array from chess.js (board()[row][file]);
 // lastMove: { from, to, color, captured? } | null.
 // opts.selectedSq highlights a square as the "chosen piece" in cheat mode.
@@ -115,6 +134,10 @@ export function renderIsoBoardHTML(board, lastMove, opts = {}) {
   return `<div class="iso-scene">
       <div class="iso-board">${tiles.join("")}</div>
       <div class="iso-pieces">${pieces.join("")}</div>
+      <div class="iso-labels">
+        ${renderFileLabelsHTML()}
+        ${renderRankLabelsHTML()}
+      </div>
     </div>`;
 }
 
