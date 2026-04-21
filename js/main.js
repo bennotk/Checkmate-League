@@ -6,7 +6,7 @@ import {
 } from "./state.js";
 import { CONFIG } from "./config.js";
 import {
-  renderTopbar, renderPreGame, renderLiveMatch, renderResult,
+  renderTopbar, renderPreGame, renderLiveMatch, renderResult, renderTrainingRoom,
   patchLive, toast, openModal, closeModal,
 } from "./ui.js";
 import {
@@ -123,6 +123,41 @@ document.addEventListener("click", async (e) => {
       renderPreGame(state);
       break;
     }
+    case "quit-to-room": {
+      // Finished match -> Training Room. Preserve champions so the next match
+      // can reuse them directly from the room.
+      const keepLeft  = state?.leftChampionId;
+      const keepRight = state?.rightChampionId;
+      state = createInitialState();
+      if (keepLeft)  state.leftChampionId  = keepLeft;
+      if (keepRight) state.rightChampionId = keepRight;
+      state.phase = "training-room";
+      saveState(state);
+      renderTopbar(state);
+      renderTrainingRoom(state);
+      break;
+    }
+    case "room-start-match": {
+      // Chess table in the room -> champion selection.
+      state.phase = "pregame";
+      saveState(state);
+      renderTopbar(state);
+      renderPreGame(state);
+      break;
+    }
+    case "quick-match": {
+      // Bypass the table, keep current champions, jump into the match.
+      try {
+        t.disabled = true;
+        await startMatch(state);
+        renderLiveMatch(state);
+      } catch (err) {
+        console.error(err);
+        toast("Stockfish konnte nicht geladen werden. Siehe Konsole.", "bad");
+        t.disabled = false;
+      }
+      break;
+    }
     case "select-champion": {
       const side = t.dataset.side;
       const id = t.dataset.id;
@@ -180,7 +215,8 @@ document.addEventListener("click", async (e) => {
 // Router
 function routeRender() {
   if (!state) { renderPreGame(); return; }
-  if (state.phase === "pregame") renderPreGame(state);
+  if (state.phase === "training-room") renderTrainingRoom(state);
+  else if (state.phase === "pregame") renderPreGame(state);
   else if (state.phase === "playing") renderLiveMatch(state);
   else if (state.phase === "finished") renderResult(state);
 }

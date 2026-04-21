@@ -441,6 +441,121 @@ body.retro {
 }
 .iso-wrapper.cheat-mode .cheat-banner { display: flex; }
 
+/* ============================================================
+   Training Room — isometric hub scene with drag-to-pan.
+   Floor tiles: the iso-board diamond trick at room scale.
+   Objects: absolute-positioned by grid --col/--row into iso
+   space, each carrying an SVG art block.
+   ============================================================ */
+.room-view {
+  display: flex; flex-direction: column; gap: 10px;
+  height: calc(100vh - 120px);
+}
+.room-header {
+  display: flex; justify-content: space-between; align-items: flex-end;
+  padding: 6px 4px; border-bottom: 1px dashed var(--line);
+}
+.room-header h2 { margin: 0; color: var(--accent); letter-spacing: 2px; font-size: 18px; }
+.room-header-actions { display: flex; gap: 6px; }
+
+.iso-room-wrapper {
+  position: relative;
+  flex: 1;
+  overflow: auto;
+  background:
+    radial-gradient(ellipse at 50% 40%, rgba(127,255,106,0.05), transparent 70%),
+    linear-gradient(180deg, #050805, #020402);
+  border: 1px solid var(--line);
+  cursor: grab;
+  user-select: none;
+  /* Hide scrollbars but keep scrollability. */
+  scrollbar-width: none;
+}
+.iso-room-wrapper::-webkit-scrollbar { display: none; }
+.iso-room-wrapper.is-dragging { cursor: grabbing; }
+
+.iso-room-help {
+  position: absolute; bottom: 8px; left: 12px;
+  color: var(--ink-dim); font-size: 11px; letter-spacing: 0.5px;
+  pointer-events: none; opacity: 0.75;
+}
+
+.iso-room-scene {
+  position: relative;
+  --scene-w: 800px;
+  --scene-h: 500px;
+}
+
+/* Floor tiles — same diamond clip as the chess board, at room scale. */
+.room-floor { position: absolute; inset: 0; pointer-events: none; }
+.room-tile {
+  position: absolute;
+  width: var(--tile-w);
+  height: var(--tile-h);
+  left: calc((var(--col) - var(--row)) * (var(--tile-w) / 2) + (var(--scene-w) / 2) - (var(--tile-w) / 2));
+  top:  calc((var(--col) + var(--row)) * (var(--tile-h) / 2) + 40px);
+  clip-path: polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%);
+}
+.room-tile.l {
+  background: linear-gradient(160deg, #2c3a2e, #1a251c 60%, #131e14);
+  box-shadow: inset 0 -1px 0 rgba(0,0,0,0.35);
+}
+.room-tile.d {
+  background: linear-gradient(160deg, #0c1a0e, #091309 60%, #050a05);
+  box-shadow: inset 0 -1px 0 rgba(0,0,0,0.5);
+}
+
+/* Object layer: each object occupies its tile's visual footprint. The art
+   SVG is 120x120 and scaled to roughly the tile's width; pointer-events
+   only on interactive objects so drag feels smooth over the floor. */
+.room-objects { position: absolute; inset: 0; }
+.room-obj {
+  position: absolute;
+  width: calc(var(--tile-w) * 1.2);
+  height: calc(var(--tile-w) * 1.2);
+  left: calc((var(--col) - var(--row)) * (var(--tile-w) / 2) + (var(--scene-w) / 2) - (var(--tile-w) * 0.6));
+  top:  calc((var(--col) + var(--row)) * (var(--tile-h) / 2) + 40px - (var(--tile-w) * 0.85));
+  pointer-events: none;
+  transition: transform 0.15s ease, filter 0.15s ease;
+}
+.room-obj.is-interactive {
+  pointer-events: auto;
+  cursor: pointer;
+}
+.room-obj.is-interactive:hover {
+  transform: translateY(-3px);
+  filter: drop-shadow(0 0 8px rgba(127,255,106,0.55));
+}
+.room-obj-art { width: 100%; height: 100%; }
+.room-obj-art svg { display: block; width: 100%; height: 100%; }
+
+.room-obj-label {
+  position: absolute;
+  left: 50%; bottom: -8px;
+  transform: translateX(-50%);
+  background: rgba(7,10,8,0.85);
+  color: var(--accent);
+  border: 1px solid var(--line);
+  padding: 2px 8px;
+  font-size: 10px;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  white-space: nowrap;
+  opacity: 0.85;
+  transition: opacity 0.15s ease;
+  pointer-events: none;
+}
+.room-obj.is-interactive:hover .room-obj-label { opacity: 1; }
+
+/* Subtle pulse on the chess table so the interactive element reads. */
+.room-chesstable .room-table-glow {
+  animation: room-pulse 2s ease-in-out infinite;
+}
+@keyframes room-pulse {
+  0%, 100% { opacity: 0.35; }
+  50%      { opacity: 0.9;  }
+}
+
 /* Piece: lives in the iso-pieces layer so it always sits above tile fills.
    The container's bottom edge is placed at the tile's widest horizontal slice
    (tile vertical midpoint) so the glyph appears to stand *on* the diamond,

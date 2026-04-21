@@ -11,6 +11,7 @@ import { getAllCharacters, getCharacterById } from "../src/game/characters.js";
 import { buildStatusLine, getPositionAssessment } from "../src/game/match-status.js";
 import { getPortraitSVG } from "../src/game/portraits.js";
 import { renderIsoBoardHTML, renderIsoBoardPlaceholder, bindIsoFullscreen } from "./iso-board.js";
+import { renderRoomHTML, bindRoomDrag } from "./iso-room.js";
 
 function evalBarGeom(evalPawns) {
   const clamped = Math.max(-5, Math.min(5, evalPawns));
@@ -471,6 +472,25 @@ export function renderResult(state) {
       <h3>Zug-Historie</h3>
       <div class="mono log-history">${renderMoveList(state)}</div>
       <div class="hr"></div>
-      <button class="btn primary" data-action="new-match">[ NEUE PARTIE ]</button>
+      <button class="btn primary" data-action="quit-to-room">[ ZURUECK ZUM TRAININGSRAUM ]</button>
+      <button class="btn" data-action="new-match">[ NEUE PARTIE ]</button>
     </div>`;
+}
+
+// ---- Training Room ----
+export function renderTrainingRoom(state) {
+  $("#view").innerHTML = `
+    <div class="room-view">
+      <header class="room-header">
+        <div>
+          <h2>TRAININGSRAUM</h2>
+          <div class="small dim">Ziehen zum Bewegen. Objekte anklicken.</div>
+        </div>
+        <div class="room-header-actions">
+          <button class="btn" data-action="quick-match">[ DIREKT-MATCH ]</button>
+        </div>
+      </header>
+      ${renderRoomHTML()}
+    </div>`;
+  bindRoomDrag(document.getElementById("roomWrap"));
 }
