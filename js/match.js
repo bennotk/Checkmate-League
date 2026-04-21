@@ -13,6 +13,7 @@ import {
   effectiveBlunderChance,
 } from "./state.js";
 import { getCharacterById } from "../src/game/characters.js";
+import { tickStatusEffectsAfterMatch } from "../src/game/profiles.js";
 import { getGamePhase } from "../src/game/match-status.js";
 import { getCommentary } from "../src/game/commentary.js";
 import { detectOpening } from "../src/game/openings.js";
@@ -387,6 +388,9 @@ export function finishMatch(state, result) {
   running = false;
   if (tickTimer) { clearTimeout(tickTimer); tickTimer = null; }
   log(state, `Partie beendet: ${result.reason}`, result.outcome === "win" ? "ok" : (result.outcome === "loss" || result.outcome === "dq" ? "bad" : "warn"));
+  // Statuseffekte ticken nach jeder abgeschlossenen Partie einen Zaehler
+  // runter, abgelaufene werden entfernt. Trainings-Deltas bleiben bestehen.
+  tickStatusEffectsAfterMatch(state);
   saveState(state);
   emit({ type: "finished", result });
 }

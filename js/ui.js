@@ -10,6 +10,7 @@ import { getChess } from "./match.js";
 import { getAllCharacters, getCharacterById } from "../src/game/characters.js";
 import { buildStatusLine, getPositionAssessment } from "../src/game/match-status.js";
 import { getPortraitSVG } from "../src/game/portraits.js";
+import { getEffectiveStats, getProfile } from "../src/game/profiles.js";
 import { renderIsoBoardHTML, renderIsoBoardPlaceholder, bindIsoFullscreen } from "./iso-board.js";
 import { renderRoomHTML, bindRoomDrag } from "./iso-room.js";
 
@@ -76,6 +77,46 @@ function cheatBannerText(state) {
     : "Manipulation aktiv — Figur anklicken.";
 }
 
+// Renders "LABEL 72 (+5)" with a colored chip for any non-zero delta.
+// effStats comes from getEffectiveStats(profile, character).
+function statPill(effStats, label, statKey) {
+  const s = effStats[statKey];
+  if (!s) return `${label} —`;
+  const d = s.delta | 0;
+  if (d === 0) return `${label} ${s.effective}`;
+  const cls = d > 0 ? "stat-up" : "stat-down";
+  const sign = d > 0 ? "+" : "";
+  return `${label} ${s.effective} <span class="stat-delta ${cls}">(${sign}${d})</span>`;
+}
+
+// Compact stat strip shown in the live-match player panels so training +
+// current debuffs are always visible next to the portrait.
+function renderChampStatStrip(state, champ) {
+  if (!champ) return "";
+  const profile = getProfile(state, champ.id);
+  const eff = getEffectiveStats(profile, champ);
+  return `<div class="champ-strip">
+    <div class="champion-stats">
+      <span>${statPill(eff, "OP", "opening")}</span>
+      <span>${statPill(eff, "MG", "middlegame")}</span>
+      <span>${statPill(eff, "EG", "endgame")}</span>
+      <span>${statPill(eff, "NRV", "nerves")}</span>
+    </div>
+    ${renderStatusEffects(profile)}
+  </div>`;
+}
+
+function renderStatusEffects(profile) {
+  const effs = profile?.statusEffects ?? [];
+  if (!effs.length) return "";
+  return `<div class="char-effects">` + effs.map((e) => {
+    const kindCls = e.kind === "buff" ? "ok" : "bad";
+    return `<span class="char-effect ${kindCls}" title="${esc(e.label)}">
+        ${esc(e.label)} · ${e.durationMatches}M
+      </span>`;
+  }).join("") + `</div>`;
+}
+
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({
@@ -97,6 +138,29 @@ export function openModal(html) {
 export function closeModal() {
   $("#modal").classList.add("is-hidden");
   $("#modalContent").innerHTML = "";
+}
+
+// Character picker modal used by hub objects (vodka, training book). Each
+// character card carries data-action="pick-character" + data-char-id +
+// data-for=<reason>. Main.js delegation handles the pick and closes the
+// modal, so everything fits the existing click routing.
+export function openCharacterPickerModal({ title, description, forAction, tone = "neutral" }) {
+  const chars = getAllCharacters();
+  const cards = chars.map((c) => `
+    <button class="char-picker-card"
+            data-action="pick-character"
+            data-char-id="${esc(c.id)}"
+            data-for="${esc(forAction)}">
+      <div class="char-picker-portrait">${getPortraitSVG(c.id)}</div>
+      <div class="char-picker-body">
+        <div class="char-picker-name">${esc(c.name)}</div>
+        <div class="char-picker-role small dim">${esc(c.role)} &middot; ${c.age}</div>
+      </div>
+    </button>`).join("");
+  openModal(`
+    <h3 class="${tone === "bad" ? "bad" : tone === "ok" ? "ok" : ""}">${esc(title)}</h3>
+    <p class="small dim">${esc(description)}</p>
+    <div class="char-picker">${cards}</div>`);
 }
 
 // ---- Topbar ----
@@ -122,7 +186,10 @@ export function renderPreGame(state) {
   const leftId  = state?.leftChampionId  ?? getAllCharacters()[0].id;
   const rightId = state?.rightChampionId ?? getAllCharacters()[1]?.id ?? leftId;
 
-  const cardHtml = (c, side, activeId) => `
+  const cardHtml = (c, side, activeId) => {
+    const profile = getProfile(state ?? { charProfiles: {} }, c.id);
+    const eff = getEffectiveStats(profile, c);
+    return `
     <button class="champion-card${c.id === activeId ? " is-active" : ""}"
             data-action="select-champion" data-side="${side}" data-id="${esc(c.id)}">
       <div class="champion-portrait">${getPortraitSVG(c.id)}</div>
@@ -132,19 +199,21 @@ export function renderPreGame(state) {
           <span class="champion-role">${esc(c.role)} · ${c.age}</span>
         </div>
         <div class="champion-stats">
-          <span>OP ${c.stats.opening}</span>
-          <span>MG ${c.stats.middlegame}</span>
-          <span>EG ${c.stats.endgame}</span>
-          <span>NRV ${c.stats.nerves}</span>
-          <span>PRS ${c.stats.presence}</span>
+          <span>${statPill(eff, "OP", "opening")}</span>
+          <span>${statPill(eff, "MG", "middlegame")}</span>
+          <span>${statPill(eff, "EG", "endgame")}</span>
+          <span>${statPill(eff, "NRV", "nerves")}</span>
+          <span>${statPill(eff, "PRS", "presence")}</span>
           <span>LOY ${c.loyalty}</span>
         </div>
+        ${renderStatusEffects(profile)}
         <div class="champion-meta small dim">
           + ${esc(c.traits.join(", ") || "—")}<br/>
           − ${esc(c.flaws.join(", ") || "—")}
         </div>
       </div>
     </button>`;
+  };
 
   const cards = getAllCharacters();
   const leftRow  = cards.map((c) => cardHtml(c, "left",  leftId)).join("");
@@ -205,6 +274,7 @@ export function renderLiveMatch(state) {
             <div class="small dim">${esc(myChamp?.role ?? "")}</div>
           </div>
         </div>
+        ${renderChampStatStrip(state, myChamp)}
         <div class="clock-display ${isThinking(state, state.managerIsWhite ? "w" : "b") ? "is-thinking" : ""}" id="pnMyClockBox">
           <span class="dim small">Bedenkzeit</span>
           <b class="clock-time ${clockCls(state, state.managerIsWhite ? "w" : "b")}" id="pnMyClock">${formatClock(managerClockMs(state))}</b>
@@ -261,6 +331,7 @@ export function renderLiveMatch(state) {
             <div class="small dim">${esc(oppChamp?.role ?? "")}</div>
           </div>
         </div>
+        ${renderChampStatStrip(state, oppChamp)}
         <div class="clock-display ${isThinking(state, state.managerIsWhite ? "b" : "w") ? "is-thinking" : ""}" id="pnOppClockBox">
           <span class="dim small">Bedenkzeit</span>
           <b class="clock-time ${clockCls(state, state.managerIsWhite ? "b" : "w")}" id="pnOppClock">${formatClock(opponentClockMs(state))}</b>

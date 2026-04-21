@@ -40,6 +40,21 @@ export const CONFIG = {
   // auch sehr lange "Denkzeiten" die Engine nicht ausbremsen oder leerlaufen).
   engineMovetime: { factor: 0.55, min: 150, max: 1400 },
 
+  // --- Persistente Charakter-Mods ---
+  // Wodka-Debuff: wirkt auf naechstes Match; senkt Spielphasen-Stats + Nerven.
+  drunkEffect: {
+    id: "drunk",
+    label: "Betrunken",
+    kind: "debuff",
+    mods: { opening: -8, middlegame: -12, endgame: -10, nerves: -20, dexterity: -10 },
+    durationMatches: 1,
+  },
+  // Trainings-Boni: permanente Stat-Steigerungen pro Anwendung (gecappt in
+  // profiles.js via TRAINING_CAP).
+  trainingGains: {
+    opening: { opening: 5 },
+  },
+
   // --- Blunder-Modell ---
   // Skill-Level steht fuer "ideale" Stellungsbehandlung. Fehler werden durch
   // eine eigene Blunder-Chance modelliert: wir fordern mehrere Zug-Kandidaten

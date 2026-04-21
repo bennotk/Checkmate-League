@@ -3,6 +3,7 @@
 
 import { CONFIG } from "./config.js";
 import { getCharacterById, getAllCharacters } from "../src/game/characters.js";
+import { getEffectiveStats, getProfile, ensureProfiles } from "../src/game/profiles.js";
 import { getGamePhase } from "../src/game/match-status.js";
 
 export const STORAGE_KEY = "checkmate-league-match-v2";
@@ -51,6 +52,12 @@ export function createInitialState() {
     // pausiert den Tick-Loop, erwartet vom UI: Figur-Click + Zielfeld-Click.
     cheatMode: { active: false, selectedSq: null },
 
+    // Persistentes Profil je Charakter: Trainings-Boni + aktive Statuseffekte.
+    // Trainings-Deltas ueberleben Matches, Statuseffekte laufen pro Match ab.
+    charProfiles: Object.fromEntries(
+      getAllCharacters().map((c) => [c.id, { training: {}, statusEffects: [] }])
+    ),
+
     log: [],
 
     _seed: Math.floor(Math.random() * 1e9),
@@ -93,6 +100,8 @@ export function loadState() {
     parsed.lastThinkMs ??= 0;
     // Cheat-Mode ist rein sitzungs-lokal; nach Reload immer zuruecksetzen.
     parsed.cheatMode = { active: false, selectedSq: null };
+    parsed.charProfiles ??= {};
+    ensureProfiles(parsed);
     return parsed;
   } catch { return null; }
 }
@@ -110,23 +119,26 @@ function statToSkill(stat) {
   return Math.max(CONFIG.skillMin, Math.min(CONFIG.skillMax, Math.round(s / 5)));
 }
 
-// Basis-Skill eines Champions fuer die aktuelle Spielphase.
-function championBaseSkill(champ, phase) {
+// Basis-Skill eines Champions fuer die aktuelle Spielphase, bereits inklusive
+// Trainings-Deltas und aktiver Status-Effekte aus dem charProfile.
+function championBaseSkill(state, champ, phase) {
   if (!champ) return Math.round((CONFIG.startSkillPlayer ?? 8));
   const key = phase === "middlegame" ? "middlegame"
            : phase === "endgame"   ? "endgame"
            :                          "opening";
-  return statToSkill(champ.stats?.[key]);
+  const stats = getEffectiveStats(getProfile(state, champ.id), champ);
+  return statToSkill(stats[key]?.effective ?? champ.stats?.[key]);
 }
 
 // Manager-orientierte Sicht: self = unser Champion, opponent = Gegner-Champion.
-// Buffs wirken auf self/opponent. Phase wird aus fullMoveNumber abgeleitet.
+// Match-Buffs (Interventionen) wirken additiv auf die bereits mit Profil
+// gewichteten Skills.
 export function effectiveSkills(state) {
   const phase = getGamePhase(state.fullMoveNumber ?? 1);
   const self = getCharacterById(state.leftChampionId);
   const opp  = getCharacterById(state.rightChampionId);
-  let selfSkill = championBaseSkill(self, phase);
-  let oppSkill  = championBaseSkill(opp,  phase);
+  let selfSkill = championBaseSkill(state, self, phase);
+  let oppSkill  = championBaseSkill(state, opp,  phase);
   for (const b of state.buffs) {
     selfSkill += b.selfSkillDelta || 0;
     oppSkill  += b.opponentSkillDelta || 0;

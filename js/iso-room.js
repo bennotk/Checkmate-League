@@ -25,7 +25,9 @@ const OBJECTS = [
   { col: 3, row: 2, type: "crate" },
   { col: 9, row: 2, type: "counter" },
   { col: 9, row: 3, type: "npc", variant: "bartender", label: "Ewa" },
+  { col: 8, row: 2, type: "vodka", action: "room-vodka", label: "Wodka" },
   { col: 3, row: 7, type: "trainingdummy" },
+  { col: 5, row: 7, type: "bookshelf", action: "room-train-opening", label: "Eroeffnungsbuch" },
   { col: 7, row: 8, type: "npc", variant: "coach", label: "Coach" },
   { col: 1, row: 6, type: "crate" },
   { col: 8, row: 6, type: "crate" },
@@ -126,6 +128,45 @@ const ART = {
     if (o.variant === "coach") return npcCoach();
     return npcGeneric();
   },
+
+  vodka: () => `
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120">
+      <!-- small iso table -->
+      <polygon points="60,64 90,78 60,92 30,78" fill="#6b4423"/>
+      <polygon points="30,78 60,92 60,110 30,96" fill="#4a2e18"/>
+      <polygon points="90,78 60,92 60,110 90,96" fill="#5a3a20"/>
+      <!-- bottle -->
+      <rect x="54" y="28" width="12" height="40" rx="2" fill="#3a5a3a"/>
+      <rect x="56" y="22" width="8"  height="10" rx="1" fill="#1e2f1e"/>
+      <rect x="54" y="44" width="12" height="10" fill="#c0e8c0" opacity="0.85"/>
+      <text x="60" y="51" text-anchor="middle"
+            font-family="ui-monospace, Menlo, monospace"
+            font-size="6" font-weight="700" fill="#0c1a0e">VOD</text>
+      <!-- shot glass + spill -->
+      <path d="M76 78 L82 78 L81 88 L77 88 Z" fill="#c0e8c0" opacity="0.9"/>
+      <ellipse cx="79" cy="92" rx="6" ry="1.2" fill="#7fff6a" opacity="0.35"/>
+    </svg>`,
+
+  bookshelf: () => `
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120">
+      <!-- table (iso) -->
+      <polygon points="60,60 104,80 60,100 16,80" fill="#6b4423"/>
+      <polygon points="16,80 60,100 60,116 16,96" fill="#4a2e18"/>
+      <polygon points="104,80 60,100 60,116 104,96" fill="#5a3a20"/>
+      <!-- stack of books on top -->
+      <rect x="38" y="46" width="44" height="8" rx="1" fill="#5a3a3a"/>
+      <rect x="34" y="54" width="52" height="8" rx="1" fill="#3a5a3a"/>
+      <rect x="40" y="62" width="40" height="8" rx="1" fill="#3a3a5a"/>
+      <!-- open book -->
+      <g transform="translate(60,42)">
+        <path d="M-14 -2 Q0 2 14 -2 L14 8 Q0 12 -14 8 Z" fill="#c0e8c0"/>
+        <path d="M0 -1 L0 10" stroke="#6a8e6a" stroke-width="0.8"/>
+        <line x1="-10" y1="2" x2="-2" y2="2" stroke="#2c3a2e" stroke-width="0.5"/>
+        <line x1="-10" y1="5" x2="-2" y2="5" stroke="#2c3a2e" stroke-width="0.5"/>
+        <line x1="2"   y1="2" x2="10" y2="2" stroke="#2c3a2e" stroke-width="0.5"/>
+        <line x1="2"   y1="5" x2="10" y2="5" stroke="#2c3a2e" stroke-width="0.5"/>
+      </g>
+    </svg>`,
 };
 
 function miniBoard(cx, cy) {

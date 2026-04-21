@@ -7,8 +7,10 @@ import {
 import { CONFIG } from "./config.js";
 import {
   renderTopbar, renderPreGame, renderLiveMatch, renderResult, renderTrainingRoom,
-  patchLive, toast, openModal, closeModal,
+  patchLive, toast, openModal, closeModal, openCharacterPickerModal,
 } from "./ui.js";
+import { applyStatusEffect, applyTraining } from "../src/game/profiles.js";
+import { getCharacterById } from "../src/game/characters.js";
 import {
   startMatch, stopMatch, offerDraw, onMatchUpdate,
   applyCheatMove, cancelCheatMove, setCheatSelection,
@@ -115,22 +117,27 @@ document.addEventListener("click", async (e) => {
     case "new-match": {
       const keepLeft  = state?.leftChampionId;
       const keepRight = state?.rightChampionId;
+      const keepProfiles = state?.charProfiles;
       state = createInitialState();
       if (keepLeft)  state.leftChampionId  = keepLeft;
       if (keepRight) state.rightChampionId = keepRight;
+      if (keepProfiles) state.charProfiles = keepProfiles;
       saveState(state);
       renderTopbar(state);
       renderPreGame(state);
       break;
     }
     case "quit-to-room": {
-      // Finished match -> Training Room. Preserve champions so the next match
-      // can reuse them directly from the room.
+      // Finished match -> Training Room. Preserve champions + persistent
+      // character profiles (training + still-active status effects) so the
+      // loop stays coherent across matches.
       const keepLeft  = state?.leftChampionId;
       const keepRight = state?.rightChampionId;
+      const keepProfiles = state?.charProfiles;
       state = createInitialState();
       if (keepLeft)  state.leftChampionId  = keepLeft;
       if (keepRight) state.rightChampionId = keepRight;
+      if (keepProfiles) state.charProfiles = keepProfiles;
       state.phase = "training-room";
       saveState(state);
       renderTopbar(state);
@@ -156,6 +163,46 @@ document.addEventListener("click", async (e) => {
         toast("Stockfish konnte nicht geladen werden. Siehe Konsole.", "bad");
         t.disabled = false;
       }
+      break;
+    }
+    case "room-vodka": {
+      openCharacterPickerModal({
+        title: "Wodka ausschenken",
+        description: "Wem spendierst du einen Drink? Der Effekt haelt ein Match.",
+        forAction: "vodka",
+        tone: "bad",
+      });
+      break;
+    }
+    case "room-train-opening": {
+      openCharacterPickerModal({
+        title: "Eroeffnungs-Training",
+        description: "Wer verbringt Zeit mit dem Buch? Training bleibt permanent.",
+        forAction: "train-opening",
+        tone: "ok",
+      });
+      break;
+    }
+    case "pick-character": {
+      const charId = t.dataset.charId;
+      const forAction = t.dataset.for;
+      const char = getCharacterById(charId);
+      if (!char) { closeModal(); break; }
+      if (forAction === "vodka") {
+        applyStatusEffect(state, charId, CONFIG.drunkEffect);
+        toast(`${char.name} ist jetzt betrunken.`, "warn");
+      } else if (forAction === "train-opening") {
+        const applied = applyTraining(state, charId, CONFIG.trainingGains.opening);
+        const delta = applied.opening ?? 0;
+        if (delta > 0) toast(`${char.name}: Eroeffnung +${delta}.`, "ok");
+        else toast(`${char.name} hat das Training-Limit erreicht.`, "warn");
+      }
+      closeModal();
+      saveState(state);
+      // Training/Debuffs koennen im Trainingsraum angewandt werden; neu
+      // rendern, damit etwaige UI-Teile (Labels, Statustafeln) aktualisiert
+      // werden. renderTopbar reicht fuer die Oberflaechen-Stat-Strips.
+      renderTopbar(state);
       break;
     }
     case "select-champion": {

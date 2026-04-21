@@ -257,8 +257,64 @@ body.retro {
 .champion-name { color: var(--accent); font-weight: 700; letter-spacing: .5px; font-size: 13px; }
 .champion-role { color: var(--ink-dim); font-size: 10px; text-transform: uppercase; letter-spacing: .5px; }
 .champion-stats { display: flex; flex-wrap: wrap; gap: 10px; font-size: 11px; color: var(--ink); margin: 4px 0 6px; }
-.champion-stats span { min-width: 50px; }
+.champion-stats span { min-width: 68px; }
 .champion-meta { font-size: 10px; line-height: 1.5; }
+
+/* Delta chips next to a stat number. Green for buffs / training gains,
+   red for debuffs. Applied via .stat-up / .stat-down. */
+.stat-delta { font-size: 10px; font-weight: 700; letter-spacing: 0; margin-left: 2px; }
+.stat-delta.stat-up   { color: var(--accent); text-shadow: 0 0 4px rgba(127,255,106,0.35); }
+.stat-delta.stat-down { color: var(--danger); text-shadow: 0 0 4px rgba(255,94,94,0.35); }
+
+/* Compact status-effect chips shown on character cards and panels. */
+.char-effects {
+  display: flex; flex-wrap: wrap; gap: 4px;
+  margin: 4px 0 6px;
+}
+.char-effect {
+  border: 1px solid var(--line);
+  padding: 1px 6px;
+  font-size: 10px;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  background: var(--panel);
+  color: var(--ink-dim);
+}
+.char-effect.ok  { color: var(--accent); border-color: rgba(127,255,106,0.5); }
+.char-effect.bad { color: var(--danger); border-color: rgba(255,94,94,0.55); }
+
+/* Stat strip inside the live-match player panels. */
+.champ-strip {
+  margin: 2px 0 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  background: #07100a;
+}
+.champ-strip .champion-stats { gap: 8px; margin: 0 0 4px; }
+
+/* Character picker modal (used by hub objects). */
+.char-picker {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 8px;
+  margin-top: 10px;
+}
+.char-picker-card {
+  display: flex; flex-direction: column; align-items: center;
+  gap: 6px;
+  padding: 10px; background: var(--panel-2);
+  border: 1px solid var(--line);
+  color: var(--ink); font: inherit; cursor: pointer;
+  text-align: center;
+}
+.char-picker-card:hover { border-color: var(--accent); }
+.char-picker-portrait {
+  width: 84px; height: 84px; border: 1px solid var(--line);
+  background: var(--dark); overflow: hidden;
+}
+.char-picker-portrait svg { display: block; width: 100%; height: 100%; }
+.char-picker-name { color: var(--accent); font-weight: 700; font-size: 13px; letter-spacing: 0.5px; }
+.char-picker-role { font-size: 10px; }
 
 /* Player panel header: portrait on the left, name + role on the right. */
 .player-head { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
