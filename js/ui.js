@@ -9,6 +9,7 @@ import { canCast } from "./interventions.js";
 import { getChess } from "./match.js";
 import { getAllCharacters, getCharacterById } from "../src/game/characters.js";
 import { buildStatusLine, getPositionAssessment } from "../src/game/match-status.js";
+import { getPortraitSVG } from "../src/game/portraits.js";
 import { renderIsoBoardHTML, renderIsoBoardPlaceholder, bindIsoFullscreen } from "./iso-board.js";
 
 function evalBarGeom(evalPawns) {
@@ -123,21 +124,24 @@ export function renderPreGame(state) {
   const cardHtml = (c, side, activeId) => `
     <button class="champion-card${c.id === activeId ? " is-active" : ""}"
             data-action="select-champion" data-side="${side}" data-id="${esc(c.id)}">
-      <div class="champion-head">
-        <span class="champion-name">${esc(c.name)}</span>
-        <span class="champion-role">${esc(c.role)} · ${c.age}</span>
-      </div>
-      <div class="champion-stats">
-        <span>OP ${c.stats.opening}</span>
-        <span>MG ${c.stats.middlegame}</span>
-        <span>EG ${c.stats.endgame}</span>
-        <span>NRV ${c.stats.nerves}</span>
-        <span>PRS ${c.stats.presence}</span>
-        <span>LOY ${c.loyalty}</span>
-      </div>
-      <div class="champion-meta small dim">
-        + ${esc(c.traits.join(", ") || "—")}<br/>
-        − ${esc(c.flaws.join(", ") || "—")}
+      <div class="champion-portrait">${getPortraitSVG(c.id)}</div>
+      <div class="champion-body">
+        <div class="champion-head">
+          <span class="champion-name">${esc(c.name)}</span>
+          <span class="champion-role">${esc(c.role)} · ${c.age}</span>
+        </div>
+        <div class="champion-stats">
+          <span>OP ${c.stats.opening}</span>
+          <span>MG ${c.stats.middlegame}</span>
+          <span>EG ${c.stats.endgame}</span>
+          <span>NRV ${c.stats.nerves}</span>
+          <span>PRS ${c.stats.presence}</span>
+          <span>LOY ${c.loyalty}</span>
+        </div>
+        <div class="champion-meta small dim">
+          + ${esc(c.traits.join(", ") || "—")}<br/>
+          − ${esc(c.flaws.join(", ") || "—")}
+        </div>
       </div>
     </button>`;
 
@@ -193,8 +197,13 @@ export function renderLiveMatch(state) {
   $("#view").innerHTML = `
     <div class="match-grid">
       <section class="panel player-panel">
-        <h3>${esc(myName.toUpperCase())} · ${myColor}</h3>
-        <div class="small dim">${esc(myChamp?.role ?? "")}</div>
+        <div class="player-head">
+          <div class="player-portrait">${getPortraitSVG(myChamp?.id)}</div>
+          <div class="player-head-text">
+            <h3>${esc(myName.toUpperCase())} · ${myColor}</h3>
+            <div class="small dim">${esc(myChamp?.role ?? "")}</div>
+          </div>
+        </div>
         <div class="clock-display ${isThinking(state, state.managerIsWhite ? "w" : "b") ? "is-thinking" : ""}" id="pnMyClockBox">
           <span class="dim small">Bedenkzeit</span>
           <b class="clock-time ${clockCls(state, state.managerIsWhite ? "w" : "b")}" id="pnMyClock">${formatClock(managerClockMs(state))}</b>
@@ -244,8 +253,13 @@ export function renderLiveMatch(state) {
       </section>
 
       <section class="panel opp-panel">
-        <h3>${esc(oppName.toUpperCase())} · ${oppColor}</h3>
-        <div class="small dim">${esc(oppChamp?.role ?? "")}</div>
+        <div class="player-head">
+          <div class="player-portrait">${getPortraitSVG(oppChamp?.id)}</div>
+          <div class="player-head-text">
+            <h3>${esc(oppName.toUpperCase())} · ${oppColor}</h3>
+            <div class="small dim">${esc(oppChamp?.role ?? "")}</div>
+          </div>
+        </div>
         <div class="clock-display ${isThinking(state, state.managerIsWhite ? "b" : "w") ? "is-thinking" : ""}" id="pnOppClockBox">
           <span class="dim small">Bedenkzeit</span>
           <b class="clock-time ${clockCls(state, state.managerIsWhite ? "b" : "w")}" id="pnOppClock">${formatClock(opponentClockMs(state))}</b>

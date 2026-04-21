@@ -237,20 +237,37 @@ body.retro {
 
 /* --- champion picker (pregame) --- */
 .section-title { font-size: 11px; color: var(--ink-dim); letter-spacing: 1px; text-transform: uppercase; margin: 14px 0 8px; }
-.champion-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 10px; }
+.champion-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 10px; }
 .champion-card {
   text-align: left; background: var(--panel-2); color: var(--ink);
   border: 1px solid var(--line); padding: 10px 12px; cursor: pointer;
   font: inherit;
+  display: grid; grid-template-columns: 72px 1fr; gap: 12px; align-items: start;
 }
 .champion-card:hover { border-color: var(--accent); }
 .champion-card.is-active { border-color: var(--accent); background: rgba(127,255,106,.08); }
+.champion-portrait {
+  width: 72px; height: 72px; border: 1px solid var(--line);
+  background: var(--dark); overflow: hidden; flex-shrink: 0;
+}
+.champion-portrait .portrait-svg,
+.player-portrait .portrait-svg { display: block; width: 100%; height: 100%; }
+.champion-body { min-width: 0; }
 .champion-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 4px; gap: 8px; }
 .champion-name { color: var(--accent); font-weight: 700; letter-spacing: .5px; font-size: 13px; }
 .champion-role { color: var(--ink-dim); font-size: 10px; text-transform: uppercase; letter-spacing: .5px; }
 .champion-stats { display: flex; flex-wrap: wrap; gap: 10px; font-size: 11px; color: var(--ink); margin: 4px 0 6px; }
 .champion-stats span { min-width: 50px; }
 .champion-meta { font-size: 10px; line-height: 1.5; }
+
+/* Player panel header: portrait on the left, name + role on the right. */
+.player-head { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+.player-portrait {
+  width: 56px; height: 56px; border: 1px solid var(--line);
+  background: var(--dark); overflow: hidden; flex-shrink: 0;
+}
+.player-head-text h3 { margin: 0; }
+.player-head-text { min-width: 0; }
 
 /* --- status strip (live match) --- */
 .status-strip { padding: 4px 4px 10px; border-bottom: 1px dashed var(--line); margin-bottom: 8px; }
