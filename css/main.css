@@ -160,6 +160,43 @@ body.retro {
 .stat b.warn { color: var(--warn); }
 .stat b.bad { color: var(--danger); }
 
+/* Chess clock panel (per side). Shown in the player panels. */
+.clock-display {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 8px;
+  margin: 2px 0 8px;
+  background: #07100a;
+  border: 1px solid var(--line);
+  border-left: 3px solid transparent;
+  transition: border-color 0.2s ease, background 0.2s ease;
+}
+.clock-display.is-thinking {
+  border-left-color: var(--accent);
+  background: linear-gradient(90deg, rgba(127,255,106,0.08), transparent 70%);
+}
+.clock-display.is-thinking .clock-time::after {
+  content: "";
+  display: inline-block;
+  width: 6px; height: 6px;
+  margin-left: 8px;
+  background: var(--accent);
+  border-radius: 50%;
+  animation: clock-pulse 1s step-end infinite;
+  vertical-align: middle;
+}
+@keyframes clock-pulse { 50% { opacity: 0; } }
+.clock-time {
+  font-variant-numeric: tabular-nums;
+  font-size: 22px;
+  letter-spacing: 1px;
+  color: var(--accent);
+}
+.clock-time.warn { color: var(--warn); }
+.clock-time.bad  { color: var(--danger); text-shadow: 0 0 8px rgba(255,94,94,0.4); }
+
 .meter { width: 100%; height: 6px; background: #0a150b; border: 1px solid var(--line); margin: 6px 0 0; overflow: hidden; }
 .meter > i { display: block; height: 100%; background: var(--ok); transition: width .3s ease; }
 .meter > i.warn { background: var(--warn); }
@@ -200,20 +237,37 @@ body.retro {
 
 /* --- champion picker (pregame) --- */
 .section-title { font-size: 11px; color: var(--ink-dim); letter-spacing: 1px; text-transform: uppercase; margin: 14px 0 8px; }
-.champion-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 10px; }
+.champion-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 10px; }
 .champion-card {
   text-align: left; background: var(--panel-2); color: var(--ink);
   border: 1px solid var(--line); padding: 10px 12px; cursor: pointer;
   font: inherit;
+  display: grid; grid-template-columns: 72px 1fr; gap: 12px; align-items: start;
 }
 .champion-card:hover { border-color: var(--accent); }
 .champion-card.is-active { border-color: var(--accent); background: rgba(127,255,106,.08); }
+.champion-portrait {
+  width: 72px; height: 72px; border: 1px solid var(--line);
+  background: var(--dark); overflow: hidden; flex-shrink: 0;
+}
+.champion-portrait .portrait-svg,
+.player-portrait .portrait-svg { display: block; width: 100%; height: 100%; }
+.champion-body { min-width: 0; }
 .champion-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 4px; gap: 8px; }
 .champion-name { color: var(--accent); font-weight: 700; letter-spacing: .5px; font-size: 13px; }
 .champion-role { color: var(--ink-dim); font-size: 10px; text-transform: uppercase; letter-spacing: .5px; }
 .champion-stats { display: flex; flex-wrap: wrap; gap: 10px; font-size: 11px; color: var(--ink); margin: 4px 0 6px; }
 .champion-stats span { min-width: 50px; }
 .champion-meta { font-size: 10px; line-height: 1.5; }
+
+/* Player panel header: portrait on the left, name + role on the right. */
+.player-head { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+.player-portrait {
+  width: 56px; height: 56px; border: 1px solid var(--line);
+  background: var(--dark); overflow: hidden; flex-shrink: 0;
+}
+.player-head-text h3 { margin: 0; }
+.player-head-text { min-width: 0; }
 
 /* --- status strip (live match) --- */
 .status-strip { padding: 4px 4px 10px; border-bottom: 1px dashed var(--line); margin-bottom: 8px; }
@@ -281,10 +335,10 @@ body.retro {
 }
 
 .iso-scene {
-  /* Tile size derived from the wrapper via container-query units so the board
-     fills exactly, whether we're inside the match panel or in fullscreen.
-     100cqw / 8 = one tile width; 100cqh / 4 = same at 2:1 aspect. */
-  --tile-w: min(calc(100cqw / 8), calc(100cqh / 4));
+  /* Tile size derived from the wrapper via container-query units. We reserve
+     a bit of margin around the board for the file / rank labels by inflating
+     the divisors — 100cqw/9 leaves a half-tile gap on either side. */
+  --tile-w: min(calc(100cqw / 9), calc(100cqh / 4.8));
   --tile-h: calc(var(--tile-w) / 2);
   --board-w: calc(var(--tile-w) * 8);
   --board-h: calc(var(--tile-h) * 8);
@@ -298,10 +352,40 @@ body.retro {
 }
 
 .iso-board,
-.iso-pieces {
+.iso-pieces,
+.iso-labels {
   position: absolute;
   inset: 0;
   pointer-events: none;
+}
+
+/* File (a-h) labels sit centered under each file's rank-1 tile.
+   Rank (8-1) labels sit to the left of each row's file-a tile.
+   Both use the same tile-w / tile-h math as the tiles so they scale cleanly. */
+.iso-file-label {
+  position: absolute;
+  width: var(--tile-w);
+  text-align: center;
+  left: calc((var(--col) - 7) * (var(--tile-w) / 2) + (var(--board-w) / 2) - (var(--tile-w) / 2));
+  top:  calc((var(--col) + 7) * (var(--tile-h) / 2) + var(--tile-h) + 4px);
+  font-size: calc(var(--tile-w) * 0.28);
+  line-height: 1;
+  color: var(--ink-dim);
+  letter-spacing: 0.1em;
+}
+.iso-rank-label {
+  position: absolute;
+  width: var(--tile-w);
+  height: var(--tile-h);
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding-right: calc(var(--tile-w) * 0.12);
+  left: calc((var(--board-w) / 2) - (var(--row) * var(--tile-w) / 2) - (var(--tile-w) * 1.5));
+  top:  calc(var(--row) * (var(--tile-h) / 2));
+  font-size: calc(var(--tile-w) * 0.28);
+  line-height: 1;
+  color: var(--ink-dim);
 }
 
 /* Tile: a rectangle clipped into a diamond via clip-path, positioned with
@@ -330,28 +414,61 @@ body.retro {
   background: linear-gradient(160deg, #4a7a3a 0%, #2c5e2c 60%, #1c3a1c 100%);
   filter: drop-shadow(0 0 6px rgba(127,255,106,0.6));
 }
+.iso-tile.selected {
+  background: linear-gradient(160deg, #d6b44b 0%, #a88028 60%, #6d5114 100%);
+  filter: drop-shadow(0 0 10px rgba(242,193,78,0.8));
+}
+
+/* Cheat mode: tiles become clickable; pieces stay click-through so clicks fall
+   through to the tile below. A banner across the top explains the flow. */
+.iso-wrapper.cheat-mode .iso-board { pointer-events: auto; }
+.iso-wrapper.cheat-mode .iso-tile  { cursor: crosshair; }
+.iso-wrapper.cheat-mode .iso-piece { pointer-events: none; }
+.cheat-banner {
+  display: none;
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  z-index: 6;
+  padding: 8px 12px;
+  background: linear-gradient(90deg, rgba(242,193,78,0.22), rgba(242,193,78,0.04));
+  border-bottom: 1px solid rgba(242,193,78,0.5);
+  color: var(--warn);
+  font-size: 12px;
+  letter-spacing: 0.5px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.iso-wrapper.cheat-mode .cheat-banner { display: flex; }
 
 /* Piece: lives in the iso-pieces layer so it always sits above tile fills.
-   Anchored so the glyph appears centered on the tile's top face with a
-   small lift to suggest it is standing on the field. */
+   The container's bottom edge is placed at the tile's widest horizontal slice
+   (tile vertical midpoint) so the glyph appears to stand *on* the diamond,
+   not sink below its bottom corner. */
 .iso-piece {
   position: absolute;
   width: var(--tile-w);
   height: calc(var(--tile-w) * 1.1);
   left: calc((var(--col) - var(--row)) * (var(--tile-w) / 2) + (var(--board-w) / 2) - (var(--tile-w) / 2));
-  top:  calc((var(--col) + var(--row)) * (var(--tile-h) / 2) - (var(--tile-w) * 0.55));
+  top:  calc((var(--col) + var(--row)) * (var(--tile-h) / 2) - (var(--tile-w) * 0.85));
   display: flex;
   align-items: flex-end;
   justify-content: center;
   pointer-events: none;
 }
+/* Round, blurred ellipse sitting just under the piece's feet. */
 .iso-piece-shadow {
   position: absolute;
-  left: 15%;
-  right: 15%;
-  bottom: calc(var(--tile-w) * -0.05);
-  height: calc(var(--tile-h) * 0.45);
-  background: radial-gradient(ellipse at 50% 50%, rgba(0,0,0,0.55), transparent 70%);
+  left: 18%;
+  right: 18%;
+  bottom: calc(var(--tile-w) * 0.02);
+  height: calc(var(--tile-h) * 0.55);
+  background: radial-gradient(ellipse at 50% 50%,
+              rgba(0,0,0,0.70) 0%,
+              rgba(0,0,0,0.40) 40%,
+              rgba(0,0,0,0.0) 75%);
+  filter: blur(1px);
+  border-radius: 50%;
   pointer-events: none;
   z-index: 0;
 }
@@ -382,4 +499,42 @@ body.retro {
     0 0 2px rgba(0,0,0,0.4),
     1px 1px 0 rgba(200,255,200,0.35),
    -1px 0 0 rgba(200,255,200,0.25);
+}
+
+/* ---- Move + capture animations ----
+   The moving piece is already positioned at its destination tile. We offset
+   its transform back to the origin, then interpolate: lift -> slide -> land.
+   Captured pieces spin off-board and fade out. */
+.iso-piece.is-moving {
+  --move-dx: calc((var(--move-dcol) - var(--move-drow)) * (var(--tile-w) / 2));
+  --move-dy: calc((var(--move-dcol) + var(--move-drow)) * (var(--tile-h) / 2));
+  --hop-h: calc(var(--tile-w) * -0.45);
+  animation: iso-move 320ms cubic-bezier(0.4, 0.05, 0.5, 1) 1 both;
+  z-index: 2;
+}
+@keyframes iso-move {
+  0%   { transform: translate(var(--move-dx), var(--move-dy)); }
+  25%  { transform: translate(var(--move-dx), calc(var(--move-dy) + var(--hop-h))); }
+  75%  { transform: translate(0px, var(--hop-h)); }
+  100% { transform: translate(0, 0); }
+}
+/* Shadow tightens while the piece is airborne so the fake 3D reads. */
+.iso-piece.is-moving .iso-piece-shadow {
+  animation: iso-shadow 320ms cubic-bezier(0.4, 0.05, 0.5, 1) 1 both;
+}
+@keyframes iso-shadow {
+  0%   { transform: scale(1);   opacity: 0.9; }
+  50%  { transform: scale(0.6); opacity: 0.4; }
+  100% { transform: scale(1);   opacity: 0.9; }
+}
+
+.iso-piece.is-captured {
+  animation: iso-captured 520ms ease-in 1 both;
+  z-index: 3;
+}
+.iso-piece.is-captured .iso-piece-shadow { opacity: 0; }
+@keyframes iso-captured {
+  0%   { transform: translate(0, 0) rotate(0deg) scale(1);        opacity: 1; }
+  25%  { transform: translate(calc(var(--tile-w) *  0.4), calc(var(--tile-w) * -0.8)) rotate(240deg) scale(1.05); opacity: 1; }
+  100% { transform: translate(calc(var(--tile-w) *  1.8), calc(var(--tile-w) *  0.9)) rotate(900deg) scale(0.5);  opacity: 0; }
 }

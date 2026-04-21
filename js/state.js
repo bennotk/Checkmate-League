@@ -41,6 +41,16 @@ export function createInitialState() {
     openingEco: null,
     openingName: null,
 
+    // Schachuhr (ms). Wird in match.js beim Start auf CONFIG.startClockMs gesetzt
+    // und nach jedem Halbzug um die berechnete Bedenkzeit gekuerzt.
+    whiteClockMs: CONFIG.startClockMs,
+    blackClockMs: CONFIG.startClockMs,
+    lastThinkMs: 0,
+
+    // Board-Manipulations-Modus. Wird von der Cheat-Intervention gesetzt,
+    // pausiert den Tick-Loop, erwartet vom UI: Figur-Click + Zielfeld-Click.
+    cheatMode: { active: false, selectedSq: null },
+
     log: [],
 
     _seed: Math.floor(Math.random() * 1e9),
@@ -78,6 +88,11 @@ export function loadState() {
     parsed.evals ??= [];
     parsed.openingEco ??= null;
     parsed.openingName ??= null;
+    parsed.whiteClockMs ??= CONFIG.startClockMs;
+    parsed.blackClockMs ??= CONFIG.startClockMs;
+    parsed.lastThinkMs ??= 0;
+    // Cheat-Mode ist rein sitzungs-lokal; nach Reload immer zuruecksetzen.
+    parsed.cheatMode = { active: false, selectedSq: null };
     return parsed;
   } catch { return null; }
 }
@@ -128,6 +143,75 @@ export function engineSkills(state) {
   return managerIsWhite
     ? { white: s.self,    black: s.opponent, phase: s.phase }
     : { white: s.opponent, black: s.self,    phase: s.phase };
+}
+
+// --------- Blunder-Modell ---------
+// Basischance je Skill. Zwischenwerte werden linear aus CONFIG.blunder.baseBySkill
+// interpoliert, sodass jede Skill-Stufe 0..20 stetig abbildet.
+function baseBlunderFromSkill(skill) {
+  const table = CONFIG.blunder.baseBySkill;
+  const keys = Object.keys(table).map(Number).sort((a, b) => a - b);
+  if (skill <= keys[0]) return table[keys[0]];
+  if (skill >= keys[keys.length - 1]) return table[keys[keys.length - 1]];
+  for (let i = 0; i < keys.length - 1; i++) {
+    const lo = keys[i], hi = keys[i + 1];
+    if (skill >= lo && skill <= hi) {
+      const t = (skill - lo) / (hi - lo);
+      return table[lo] + (table[hi] - table[lo]) * t;
+    }
+  }
+  return table[20];
+}
+
+function clockMultiplier(clockMs) {
+  const tiers = CONFIG.blunder.clockTiers ?? [];
+  for (const t of tiers) {
+    if (clockMs <= t.underMs) return t.mul;
+  }
+  return 1.0;
+}
+
+function thinkTimeMultiplier(thinkMs) {
+  const b = CONFIG.blunder;
+  if (thinkMs < b.thinkShortUnderMs) return b.thinkShortMul;
+  if (thinkMs < b.thinkShortishUnderMs) return b.thinkShortishMul;
+  if (thinkMs > b.thinkLongOverMs) return b.thinkLongMul;
+  if (thinkMs > b.thinkLongishOverMs) return b.thinkLongishMul;
+  return 1.0;
+}
+
+// Effektive Blunder-Chance fuer eine Seite aus Manager-Sicht.
+// side: "self" | "opponent". context: { thinkMs, clockMs }.
+export function effectiveBlunderChance(state, side, context = {}) {
+  const isSelf = side === "self";
+  const skills = effectiveSkills(state);
+  const peakSkill = isSelf ? skills.self : skills.opponent;
+
+  const base = baseBlunderFromSkill(peakSkill);
+  const cMul = clockMultiplier(context.clockMs ?? Infinity);
+  const tMul = thinkTimeMultiplier(context.thinkMs ?? 3000);
+
+  let chance = base * cMul * tMul;
+  let buffBonus = 0;
+  let buffMul = 1;
+  for (const b of state.buffs) {
+    if (isSelf) {
+      buffBonus += b.selfBlunderBonus ?? 0;
+      buffMul *= b.selfBlunderMul ?? 1;
+    } else {
+      buffBonus += b.opponentBlunderBonus ?? 0;
+      buffMul *= b.opponentBlunderMul ?? 1;
+    }
+  }
+  chance = chance * buffMul + buffBonus;
+
+  // Clamp und Schaerfe separat; Schaerfe treibt die Auswahl eines schlechten PV.
+  const capped = Math.max(0, Math.min(CONFIG.blunder.max, chance));
+  // Schaerfe: mit steigender Chance und sinkendem Skill werden die Fehler haerter.
+  const skillFactor = Math.max(0, Math.min(1, (20 - peakSkill) / 20));
+  const severity = Math.max(0, Math.min(1, 0.25 + (capped - 0.08) * 1.6 + skillFactor * 0.35));
+
+  return { chance: capped, severity, peakSkill, base, clockMul: cMul, thinkMul: tMul };
 }
 
 // Nur aktive Buffs verbleiben; tickt Dauer nach einem eigenen Zug.

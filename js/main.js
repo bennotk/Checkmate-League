@@ -9,7 +9,10 @@ import {
   renderTopbar, renderPreGame, renderLiveMatch, renderResult,
   patchLive, toast, openModal, closeModal,
 } from "./ui.js";
-import { startMatch, stopMatch, offerDraw, onMatchUpdate } from "./match.js";
+import {
+  startMatch, stopMatch, offerDraw, onMatchUpdate,
+  applyCheatMove, cancelCheatMove, setCheatSelection,
+} from "./match.js";
 import { applyIntervention, canCast } from "./interventions.js";
 
 let state = loadState() ?? createInitialState();
@@ -27,9 +30,18 @@ routeRender();
 onMatchUpdate((evt) => {
   if (!state) return;
   if (evt.type === "move" || evt.type === "starting" || evt.type === "ready"
+      || evt.type === "thinking"
       || evt.type === "draw-offered" || evt.type === "draw-accepted" || evt.type === "draw-declined") {
     renderTopbar(state);
     if (state.phase === "playing") patchLive(state);
+  }
+  if (evt.type === "move" && evt.blunder) {
+    const mySide = evt.blunderSide === "self";
+    const hard = evt.blunderSeverity >= 0.7;
+    const msg = mySide
+      ? (hard ? "Dein Spieler patzt grob!" : "Dein Spieler vertut sich.")
+      : (hard ? "Der Gegner patzt grob!" : "Der Gegner wird ungenau.");
+    toast(msg, mySide ? "bad" : "ok");
   }
   if (evt.type === "finished") {
     renderTopbar(state);
@@ -38,6 +50,35 @@ onMatchUpdate((evt) => {
 });
 
 // Event-Delegation
+// Cheat-Modus: Tile-Klicks auf dem iso-Board waehlen Figur und Zielfeld.
+document.addEventListener("click", (e) => {
+  if (!state?.cheatMode?.active) return;
+  const tile = e.target.closest(".iso-wrapper.cheat-mode .iso-tile");
+  if (!tile) return;
+  const sq = tile.dataset.sq;
+  if (!sq) return;
+
+  if (!state.cheatMode.selectedSq) {
+    setCheatSelection(state, sq);
+    patchLive(state);
+    return;
+  }
+  if (state.cheatMode.selectedSq === sq) {
+    // nochmal auf das gleiche Feld = Auswahl aufheben
+    setCheatSelection(state, null);
+    patchLive(state);
+    return;
+  }
+  const res = applyCheatMove(state, state.cheatMode.selectedSq, sq);
+  if (!res.ok) {
+    toast(res.reason ?? "Cheat-Move nicht moeglich.", "warn");
+    setCheatSelection(state, null);
+  } else {
+    toast("Brett manipuliert.", "bad");
+  }
+  patchLive(state);
+});
+
 document.addEventListener("click", async (e) => {
   const t = e.target.closest("[data-action], [data-speed], [data-modal-close]");
   if (!t) return;
@@ -53,6 +94,12 @@ document.addEventListener("click", async (e) => {
 
   const action = t.dataset.action;
   switch (action) {
+    case "cheat-cancel": {
+      cancelCheatMove(state);
+      patchLive(state);
+      toast("Manipulation abgebrochen. Kosten bleiben gebucht.", "warn");
+      break;
+    }
     case "start-match": {
       try {
         t.disabled = true;
@@ -121,6 +168,9 @@ document.addEventListener("click", async (e) => {
       patchLive(state);
       if (res.events.find((e) => e.type === "discovered")) {
         toast("Entdeckt! Heat deutlich gestiegen.", "bad");
+      }
+      if (res.events.find((e) => e.type === "manualTargetOpen")) {
+        toast("Figur anklicken, dann Zielfeld.", "warn");
       }
       break;
     }

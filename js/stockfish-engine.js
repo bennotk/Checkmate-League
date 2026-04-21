@@ -45,16 +45,35 @@ export class StockfishEngine {
     const p = this._pending;
     if (!p) return;
 
-    // info-Zeilen enthalten die Evaluation waehrend der Suche
+    // info-Zeilen enthalten die Evaluation waehrend der Suche. Mit MultiPV>1
+    // gibt es eine Zeile pro PV-Index; wir sammeln per Index den aktuellsten
+    // (= tiefsten) Eintrag.
     if (line.startsWith("info ")) {
-      const cp = line.match(/score cp (-?\d+)/);
-      if (cp) p.lastCp = parseInt(cp[1], 10);
-      const mate = line.match(/score mate (-?\d+)/);
-      if (mate) {
-        const m = parseInt(mate[1], 10);
-        p.lastMate = m;
-        // Als grosser Zahlenwert fuer Eval: mate+ = sehr gut; mate- = sehr schlecht.
-        p.lastCp = m > 0 ? 100000 : -100000;
+      const mpvM = line.match(/multipv (\d+)/);
+      const idx = mpvM ? parseInt(mpvM[1], 10) : 1;
+      const cpM = line.match(/score cp (-?\d+)/);
+      const mateM = line.match(/score mate (-?\d+)/);
+      const pvI = line.indexOf(" pv ");
+      const firstMove = pvI >= 0
+        ? line.substring(pvI + 4).trim().split(/\s+/)[0]
+        : null;
+
+      if (!p.pvs) p.pvs = {};
+      const entry = p.pvs[idx] ?? (p.pvs[idx] = {});
+      if (cpM) entry.cp = parseInt(cpM[1], 10);
+      if (mateM) {
+        entry.mate = parseInt(mateM[1], 10);
+        entry.cp = entry.mate > 0 ? 100000 : -100000;
+      }
+      if (firstMove) entry.move = firstMove;
+
+      // Primaer-PV zur Abwaertskompatibilitaet (cp/mate im alten go-Return).
+      if (idx === 1) {
+        if (cpM) p.lastCp = parseInt(cpM[1], 10);
+        if (mateM) {
+          p.lastMate = parseInt(mateM[1], 10);
+          p.lastCp = p.lastMate > 0 ? 100000 : -100000;
+        }
       }
       return;
     }
@@ -64,9 +83,25 @@ export class StockfishEngine {
       const bestmove = parts[1] || null;
       const done = this._pending;
       this._pending = null;
-      // go() resolves with {bestmove, cp, mate} so the caller gets a cheap
-      // eval snapshot without running a second analysis pass.
-      done.resolve({ bestmove, cp: done.lastCp ?? 0, mate: done.lastMate ?? null });
+
+      // Sortierte PV-Liste nach Rang (1..N).
+      const pvs = [];
+      if (done.pvs) {
+        for (let i = 1; i <= (done.multiPv ?? 1); i++) {
+          const e = done.pvs[i];
+          if (e && e.move) pvs.push({ rank: i, move: e.move, cp: e.cp ?? 0, mate: e.mate ?? null });
+        }
+      }
+      if (pvs.length === 0 && bestmove) {
+        pvs.push({ rank: 1, move: bestmove, cp: done.lastCp ?? 0, mate: done.lastMate ?? null });
+      }
+
+      done.resolve({
+        bestmove,
+        cp: pvs[0]?.cp ?? done.lastCp ?? 0,
+        mate: pvs[0]?.mate ?? done.lastMate ?? null,
+        pvs,
+      });
       this._drain();
     }
   }
@@ -99,11 +134,20 @@ export class StockfishEngine {
     this._send("ucinewgame");
   }
 
-  /** Bestmove + letzte Eval fuer FEN finden. Rueckgabe: {bestmove, cp, mate}. */
-  go(fen, movetimeMs = 500) {
+  /** Bestmove + PV-Liste fuer FEN finden.
+   *  opts: number (movetimeMs) | { movetimeMs, multiPv }.
+   *  Rueckgabe: { bestmove, cp, mate, pvs: [{rank, move, cp, mate}] }. */
+  go(fen, opts = 500) {
+    const movetimeMs = typeof opts === "number" ? opts : (opts.movetimeMs ?? 500);
+    const multiPv = typeof opts === "number" ? 1 : Math.max(1, Math.min(20, opts.multiPv ?? 1));
     return this._enqueue({
       kind: "bestmove",
-      cmds: [`position fen ${fen}`, `go movetime ${movetimeMs}`],
+      multiPv,
+      cmds: [
+        `setoption name MultiPV value ${multiPv}`,
+        `position fen ${fen}`,
+        `go movetime ${movetimeMs}`,
+      ],
     });
   }
 

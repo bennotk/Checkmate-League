@@ -11,6 +11,7 @@ export function canCast(state, id) {
   const def = CONFIG.interventions[id];
   if (!def) return { ok: false, reason: "unbekannt" };
   if (state.phase !== "playing") return { ok: false, reason: "kein laufendes Match" };
+  if (state.cheatMode?.active) return { ok: false, reason: "Manipulation laeuft noch" };
   // Nur vor eigenem Zug? Wir erlauben Cast jederzeit, solange Partie laeuft,
   // um es responsiver zu machen. Dauer zaehlt ab dem naechsten eigenen Zug.
   if (state.resources < def.cost) return { ok: false, reason: "zu wenig Ressourcen" };
@@ -50,13 +51,21 @@ export function applyIntervention(state, id) {
 
   const events = [];
 
-  // Buff/Debuff anlegen, wenn Dauer vorhanden
-  if (def.durationMoves > 0 && (def.selfSkillDelta || def.opponentSkillDelta)) {
+  // Buff/Debuff anlegen, wenn Dauer vorhanden und irgendeine Wirkung existiert.
+  const hasSkillEffect = def.selfSkillDelta || def.opponentSkillDelta;
+  const hasBlunderEffect = (def.selfBlunderBonus ?? 0) || (def.opponentBlunderBonus ?? 0)
+    || (def.selfBlunderMul && def.selfBlunderMul !== 1)
+    || (def.opponentBlunderMul && def.opponentBlunderMul !== 1);
+  if (def.durationMoves > 0 && (hasSkillEffect || hasBlunderEffect)) {
     state.buffs.push({
       id: def.id,
       label: def.label,
       selfSkillDelta: def.selfSkillDelta || 0,
       opponentSkillDelta: def.opponentSkillDelta || 0,
+      selfBlunderBonus: def.selfBlunderBonus ?? 0,
+      opponentBlunderBonus: def.opponentBlunderBonus ?? 0,
+      selfBlunderMul: def.selfBlunderMul ?? 1,
+      opponentBlunderMul: def.opponentBlunderMul ?? 1,
       remaining: def.durationMoves,
       source: id,
     });
@@ -64,6 +73,12 @@ export function applyIntervention(state, id) {
 
   log(state, `${def.label} aktiviert. ${def.desc}`, "info");
   events.push({ type: "cast", id });
+
+  // Manuelle Ziel-Interventionen (z.B. Cheat): Modus oeffnen, UI uebernimmt weiter.
+  if (def.manualTarget) {
+    state.cheatMode = { active: true, selectedSq: null };
+    events.push({ type: "manualTargetOpen", id });
+  }
 
   // Entdeckungs-Roll einmalig beim Cast
   if (def.discoverChance > 0) {

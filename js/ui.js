@@ -9,6 +9,7 @@ import { canCast } from "./interventions.js";
 import { getChess } from "./match.js";
 import { getAllCharacters, getCharacterById } from "../src/game/characters.js";
 import { buildStatusLine, getPositionAssessment } from "../src/game/match-status.js";
+import { getPortraitSVG } from "../src/game/portraits.js";
 import { renderIsoBoardHTML, renderIsoBoardPlaceholder, bindIsoFullscreen } from "./iso-board.js";
 
 function evalBarGeom(evalPawns) {
@@ -29,6 +30,49 @@ function buildStatusBarText(state) {
 function openingLineText(state) {
   if (state.openingName) return `${state.openingEco} — ${state.openingName}`;
   return "Eröffnung noch offen";
+}
+
+// mm:ss for a chess clock. Under 20 s we show one decimal so the final
+// seconds feel like a real flag-fall.
+function formatClock(ms) {
+  if (ms == null || !isFinite(ms) || ms < 0) ms = 0;
+  if (ms < 20000) {
+    const s = ms / 1000;
+    return `0:${s.toFixed(1).padStart(4, "0")}`;
+  }
+  const total = Math.ceil(ms / 1000);
+  const m = Math.floor(total / 60);
+  const s = total % 60;
+  return `${m}:${String(s).padStart(2, "0")}`;
+}
+
+// Which clock belongs to the manager's side vs the opponent's side.
+function managerClockMs(state) {
+  return state.managerIsWhite ? state.whiteClockMs : state.blackClockMs;
+}
+function opponentClockMs(state) {
+  return state.managerIsWhite ? state.blackClockMs : state.whiteClockMs;
+}
+
+// Which side is about to move next (based on move count since White starts).
+function sideToMove(state) {
+  return (state.movesSan?.length ?? 0) % 2 === 0 ? "w" : "b";
+}
+function clockCls(state, side) {
+  const ms = side === "w" ? state.whiteClockMs : state.blackClockMs;
+  if (ms <= 0) return "bad";
+  if (ms < 30000) return "warn";
+  return "";
+}
+function isThinking(state, side) {
+  return state.phase === "playing" && sideToMove(state) === side;
+}
+
+function cheatBannerText(state) {
+  if (!state.cheatMode?.active) return "";
+  return state.cheatMode.selectedSq
+    ? `Figur ${state.cheatMode.selectedSq} gewaehlt — Zielfeld anklicken.`
+    : "Manipulation aktiv — Figur anklicken.";
 }
 
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -80,21 +124,24 @@ export function renderPreGame(state) {
   const cardHtml = (c, side, activeId) => `
     <button class="champion-card${c.id === activeId ? " is-active" : ""}"
             data-action="select-champion" data-side="${side}" data-id="${esc(c.id)}">
-      <div class="champion-head">
-        <span class="champion-name">${esc(c.name)}</span>
-        <span class="champion-role">${esc(c.role)} · ${c.age}</span>
-      </div>
-      <div class="champion-stats">
-        <span>OP ${c.stats.opening}</span>
-        <span>MG ${c.stats.middlegame}</span>
-        <span>EG ${c.stats.endgame}</span>
-        <span>NRV ${c.stats.nerves}</span>
-        <span>PRS ${c.stats.presence}</span>
-        <span>LOY ${c.loyalty}</span>
-      </div>
-      <div class="champion-meta small dim">
-        + ${esc(c.traits.join(", ") || "—")}<br/>
-        − ${esc(c.flaws.join(", ") || "—")}
+      <div class="champion-portrait">${getPortraitSVG(c.id)}</div>
+      <div class="champion-body">
+        <div class="champion-head">
+          <span class="champion-name">${esc(c.name)}</span>
+          <span class="champion-role">${esc(c.role)} · ${c.age}</span>
+        </div>
+        <div class="champion-stats">
+          <span>OP ${c.stats.opening}</span>
+          <span>MG ${c.stats.middlegame}</span>
+          <span>EG ${c.stats.endgame}</span>
+          <span>NRV ${c.stats.nerves}</span>
+          <span>PRS ${c.stats.presence}</span>
+          <span>LOY ${c.loyalty}</span>
+        </div>
+        <div class="champion-meta small dim">
+          + ${esc(c.traits.join(", ") || "—")}<br/>
+          − ${esc(c.flaws.join(", ") || "—")}
+        </div>
       </div>
     </button>`;
 
@@ -150,8 +197,17 @@ export function renderLiveMatch(state) {
   $("#view").innerHTML = `
     <div class="match-grid">
       <section class="panel player-panel">
-        <h3>${esc(myName.toUpperCase())} · ${myColor}</h3>
-        <div class="small dim">${esc(myChamp?.role ?? "")}</div>
+        <div class="player-head">
+          <div class="player-portrait">${getPortraitSVG(myChamp?.id)}</div>
+          <div class="player-head-text">
+            <h3>${esc(myName.toUpperCase())} · ${myColor}</h3>
+            <div class="small dim">${esc(myChamp?.role ?? "")}</div>
+          </div>
+        </div>
+        <div class="clock-display ${isThinking(state, state.managerIsWhite ? "w" : "b") ? "is-thinking" : ""}" id="pnMyClockBox">
+          <span class="dim small">Bedenkzeit</span>
+          <b class="clock-time ${clockCls(state, state.managerIsWhite ? "w" : "b")}" id="pnMyClock">${formatClock(managerClockMs(state))}</b>
+        </div>
         <div class="stat"><span id="pnSkillLabel">Skill (${skills.phase})</span><b id="pnSkill">${skills.self}</b><span class="small dim">/20</span></div>
         <div class="stat"><span>Ressourcen</span><b id="pnRes">${state.resources}</b></div>
         <div class="stat"><span>Heat</span><b id="pnHeat" class="${heatCls}">${state.heat}</b></div>
@@ -182,8 +238,12 @@ export function renderLiveMatch(state) {
           <span class="dim small">FEN</span>
           <span class="mono small" id="pnFen">${esc(state.fen)}</span>
         </div>
-        <div class="iso-wrapper" id="pnIsoWrapper">
+        <div class="iso-wrapper ${state.cheatMode?.active ? "cheat-mode" : ""}" id="pnIsoWrapper">
           <button class="iso-fs-btn" data-iso-fullscreen type="button">[ fullscreen ]</button>
+          <div class="cheat-banner" id="pnCheatBanner">
+            <span id="pnCheatBannerText">${cheatBannerText(state)}</span>
+            <button class="btn" data-action="cheat-cancel" type="button">[ Abbrechen ]</button>
+          </div>
           <div class="iso-mount" id="pnBoard">${renderIsoSceneHTML(state)}</div>
         </div>
         <div class="moves">
@@ -193,8 +253,17 @@ export function renderLiveMatch(state) {
       </section>
 
       <section class="panel opp-panel">
-        <h3>${esc(oppName.toUpperCase())} · ${oppColor}</h3>
-        <div class="small dim">${esc(oppChamp?.role ?? "")}</div>
+        <div class="player-head">
+          <div class="player-portrait">${getPortraitSVG(oppChamp?.id)}</div>
+          <div class="player-head-text">
+            <h3>${esc(oppName.toUpperCase())} · ${oppColor}</h3>
+            <div class="small dim">${esc(oppChamp?.role ?? "")}</div>
+          </div>
+        </div>
+        <div class="clock-display ${isThinking(state, state.managerIsWhite ? "b" : "w") ? "is-thinking" : ""}" id="pnOppClockBox">
+          <span class="dim small">Bedenkzeit</span>
+          <b class="clock-time ${clockCls(state, state.managerIsWhite ? "b" : "w")}" id="pnOppClock">${formatClock(opponentClockMs(state))}</b>
+        </div>
         <div class="stat"><span id="pnOppSkillLabel">Skill (${skills.phase})</span><b id="pnOppSkill">${skills.opponent}</b><span class="small dim">/20</span></div>
         <div class="stat"><span>Status</span><b id="pnOppStatus">${oppStatus(state)}</b></div>
         <div class="hr"></div>
@@ -233,8 +302,9 @@ function renderBoardHTML(state) {
 // layout if chess.js is not yet ready, so the tile system is always visible.
 function renderIsoSceneHTML(state) {
   const chess = getChess();
+  const selectedSq = state.cheatMode?.active ? state.cheatMode.selectedSq : null;
   if (!chess) return renderIsoBoardPlaceholder();
-  return renderIsoBoardHTML(chess.board(), state.lastMove);
+  return renderIsoBoardHTML(chess.board(), state.lastMove, { selectedSq });
 }
 
 const UNICODE = {
@@ -296,8 +366,14 @@ function describeEffect(def) {
   const parts = [];
   if (def.selfSkillDelta) parts.push(`eigen Skill ${def.selfSkillDelta > 0 ? "+" : ""}${def.selfSkillDelta}`);
   if (def.opponentSkillDelta) parts.push(`Gegner Skill ${def.opponentSkillDelta > 0 ? "+" : ""}${def.opponentSkillDelta}`);
+  if (def.opponentBlunderBonus) parts.push(`Gegner-Fehlerchance +${Math.round(def.opponentBlunderBonus * 100)}%-P.`);
+  if (def.selfBlunderMul && def.selfBlunderMul !== 1) {
+    const pct = Math.round((1 - def.selfBlunderMul) * 100);
+    if (pct > 0) parts.push(`eigene Fehlerchance −${pct}%`);
+  }
   if (def.durationMoves) parts.push(`für ${def.durationMoves} eigene Züge`);
   if (def.id === "offerDraw") parts.push("Gegner entscheidet nach Stellung");
+  if (def.manualTarget) parts.push("Figur frei umstellen (ignoriert Regeln)");
   return parts.join(" · ") || "Sonderwirkung";
 }
 
@@ -344,6 +420,21 @@ export function patchLive(state) {
   byId("pnBoard", (el) => el.innerHTML = renderIsoSceneHTML(state));
   byId("pnInterventions", (el) => el.innerHTML = renderInterventions(state));
   byId("pnStatusLine", (el) => el.textContent = buildStatusBarText(state));
+  byId("pnMyClock", (el) => {
+    el.textContent = formatClock(managerClockMs(state));
+    el.className = "clock-time " + clockCls(state, state.managerIsWhite ? "w" : "b");
+  });
+  byId("pnOppClock", (el) => {
+    el.textContent = formatClock(opponentClockMs(state));
+    el.className = "clock-time " + clockCls(state, state.managerIsWhite ? "b" : "w");
+  });
+  byId("pnMyClockBox", (el) => el.classList.toggle("is-thinking",
+    isThinking(state, state.managerIsWhite ? "w" : "b")));
+  byId("pnOppClockBox", (el) => el.classList.toggle("is-thinking",
+    isThinking(state, state.managerIsWhite ? "b" : "w")));
+  const iso = document.getElementById("pnIsoWrapper");
+  if (iso) iso.classList.toggle("cheat-mode", !!state.cheatMode?.active);
+  byId("pnCheatBannerText", (el) => el.textContent = cheatBannerText(state));
   byId("pnEvalFill", (el) => {
     el.style.left = eb.left + "%";
     el.style.width = eb.width + "%";

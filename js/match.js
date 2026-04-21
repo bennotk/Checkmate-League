@@ -10,6 +10,7 @@ import { CONFIG } from "./config.js";
 import { StockfishEngine } from "./stockfish-engine.js";
 import {
   log, effectiveSkills, engineSkills, decrementBuffsAfterOwnMove, saveState,
+  effectiveBlunderChance,
 } from "./state.js";
 import { getCharacterById } from "../src/game/characters.js";
 import { getGamePhase } from "../src/game/match-status.js";
@@ -24,6 +25,76 @@ function detectMoveType(san) {
   if (san.includes("=")) return "promotion";
   if (san.includes("x")) return "capture";
   return "normal";
+}
+
+// Predicts how long the side-to-move should "think" about this position.
+// Returns a chess-seconds (ms) budget. Average ~3000 ms. Drives both the
+// Stockfish search budget and the chess-clock deduction.
+function computeThinkTime(state) {
+  const c = CONFIG.dynamicThinkTime;
+  const legalMoves = chess.moves();
+  const inCheck = typeof chess.inCheck === "function"
+    ? chess.inCheck()
+    : (typeof chess.in_check === "function" ? chess.in_check() : false);
+
+  const prevEval = state.evals[state.evals.length - 2] ?? 0;
+  const curEval  = state.evals[state.evals.length - 1] ?? 0;
+  const evalSwing = Math.abs(curEval - prevEval);
+  const phase = getGamePhase(state.fullMoveNumber ?? 1);
+  const lastWasCapture = !!state.lastMove?.captured;
+
+  let t = c.baseMs;
+  t += Math.max(0, legalMoves.length - 20) * c.perLegalMoveMs;
+  if (inCheck) t += c.inCheckBonusMs;
+  if (lastWasCapture) t += c.afterCaptureBonusMs;
+  t += Math.min(5, evalSwing) * c.evalSwingBonusPerPawnMs;
+  t += c.phaseBonusMs?.[phase] ?? 0;
+
+  const jitter = 1 + (Math.random() * 2 - 1) * c.jitter;
+  t *= jitter;
+
+  return Math.max(c.min, Math.min(c.max, Math.round(t)));
+}
+
+function engineMovetimeFor(thinkMs) {
+  const e = CONFIG.engineMovetime;
+  return Math.max(e.min, Math.min(e.max, Math.round(thinkMs * e.factor)));
+}
+
+function deductClock(state, movingColor, thinkMs) {
+  if (movingColor === "w") state.whiteClockMs = Math.max(0, state.whiteClockMs - thinkMs);
+  else state.blackClockMs = Math.max(0, state.blackClockMs - thinkMs);
+  state.lastThinkMs = thinkMs;
+}
+
+function flagged(state) {
+  return state.whiteClockMs <= 0 || state.blackClockMs <= 0;
+}
+
+// Gewichtete Auswahl aus den Kandidaten, sortiert schlechter-nach-rechts.
+// severity ∈ [0,1]: 0 = leichte Ungenauigkeit (bevorzugt vordere), 1 = haerterer
+// Fehlgriff (bevorzugt hintere Eintraege).
+function pickWorsePv(candidates, severity) {
+  if (!candidates.length) return null;
+  const n = candidates.length;
+  const weights = candidates.map((_, i) => {
+    const rank = (i + 1) / n;
+    return Math.pow(rank, 1 + severity * 3);
+  });
+  const total = weights.reduce((a, b) => a + b, 0);
+  let r = Math.random() * total;
+  for (let i = 0; i < n; i++) {
+    r -= weights[i];
+    if (r <= 0) return candidates[i];
+  }
+  return candidates[n - 1];
+}
+
+// Praefix fuer Blunder-Logs (SAN + Kommentar).
+function annotateBlunderSan(san, severity) {
+  if (severity >= 0.7) return `${san}??`;
+  if (severity >= 0.35) return `${san}?`;
+  return `${san}?!`;
 }
 
 let whiteEngine = null;
@@ -61,6 +132,9 @@ export async function startMatch(state) {
   state.evals = [];
   state.openingEco = null;
   state.openingName = null;
+  state.whiteClockMs = CONFIG.startClockMs;
+  state.blackClockMs = CONFIG.startClockMs;
+  state.lastThinkMs = 0;
   state.log = [];
 
   // Farbwahl per Muenzwurf.
@@ -106,6 +180,8 @@ async function tick(state) {
   if (!running) return;
   if (state.phase !== "playing") return;
   if (drawPending) { scheduleTick(state, 200); return; }
+  // Waehrend der Manager am Brett manipuliert, faehrt die Engine nicht fort.
+  if (state.cheatMode?.active) { scheduleTick(state, 200); return; }
 
   if (state.speed === 0) { scheduleTick(state, 200); return; }
 
@@ -131,36 +207,83 @@ async function tick(state) {
   blackEngine.setSkillLevel(skills.black);
 
   try {
-    const { bestmove, cp, mate } = await engine.go(chess.fen(), CONFIG.movetimeMs);
+    // Dynamisches Timing: Bedenkzeit aus Stellung ableiten, Engine-Suchzeit
+    // daraus abgeleitet, Wandzeit durch den Speed-Regler geteilt.
+    const thinkMs = computeThinkTime(state);
+    const engineMs = engineMovetimeFor(thinkMs);
+    const factor = CONFIG.speedFactor?.[state.speed] ?? 1;
+    const wallTotalMs = factor > 0 ? (thinkMs / factor) : 0;
+    emit({ type: "thinking", side: turn, thinkMs, wallTotalMs });
+
+    const startWall = performance.now();
+    const goRes = await engine.go(chess.fen(), { movetimeMs: engineMs, multiPv: CONFIG.multiPv });
+    const { bestmove, pvs = [] } = goRes;
     if (!bestmove || bestmove === "(none)") {
       finalizeByBoard(state);
       return;
     }
+
+    // Blunder-Layer: Chance + Schaerfe aus Skill, Uhr, Bedenkzeit, aktiven Buffs.
+    const moverClockMs = whiteTurn ? state.whiteClockMs : state.blackClockMs;
+    const moverSide = isManagerPlayersMove ? "self" : "opponent";
+    const bl = effectiveBlunderChance(state, moverSide, {
+      thinkMs, clockMs: moverClockMs,
+    });
+    let chosenUci = bestmove;
+    let chosenCp = goRes.cp ?? 0;
+    let chosenMate = goRes.mate ?? null;
+    let blundered = false;
+
+    // Nur PVs in Betracht ziehen, die schlechter sind als der vom Engine-Skill
+    // bereits gewaehlte bestmove. So werden Blunder nie versehentlich zu
+    // Verbesserungen, wenn Stockfish wegen niedriger Skill-Stufe bereits einen
+    // nicht-optimalen Zug bevorzugt hat.
+    const bestRank = Math.max(0, pvs.findIndex((pv) => pv.move === bestmove));
+    const worseCandidates = pvs.slice(bestRank + 1);
+    if (worseCandidates.length > 0 && Math.random() < bl.chance) {
+      const pick = pickWorsePv(worseCandidates, bl.severity);
+      if (pick && pick.move) {
+        chosenUci = pick.move;
+        chosenCp = pick.cp ?? chosenCp;
+        chosenMate = pick.mate ?? null;
+        blundered = true;
+      }
+    }
+
     const result = chess.move({
-      from: bestmove.slice(0, 2),
-      to: bestmove.slice(2, 4),
-      promotion: bestmove.length > 4 ? bestmove[4] : undefined,
+      from: chosenUci.slice(0, 2),
+      to: chosenUci.slice(2, 4),
+      promotion: chosenUci.length > 4 ? chosenUci[4] : undefined,
     });
     if (!result) {
-      log(state, `Ungueltiger Engine-Zug "${bestmove}". Partie abgebrochen.`, "bad");
+      log(state, `Ungueltiger Engine-Zug "${chosenUci}". Partie abgebrochen.`, "bad");
       finishMatch(state, { outcome: "dq", reason: "Engine-Fehler." });
       return;
     }
 
+    // Saubere SAN in der Historie lassen, damit Eroeffnungserkennung greift.
+    // Blunder werden stattdessen via log/toast/lastMove.blunder sichtbar.
     state.movesSan.push(result.san);
-    state.movesUci.push(bestmove);
+    state.movesUci.push(chosenUci);
     state.fen = chess.fen();
-    state.lastMove = { from: result.from, to: result.to, san: result.san, color: result.color };
+    state.lastMove = {
+      from: result.from, to: result.to, san: result.san,
+      color: result.color, captured: result.captured ?? null,
+      blunder: blundered, blunderSeverity: blundered ? bl.severity : 0,
+    };
+
+    // Schachuhr der ziehenden Seite abziehen.
+    deductClock(state, result.color, thinkMs);
 
     // Eval white-relative. Stockfish liefert cp aus Sicht der Seite,
     // die gerade gezogen hat.
     const prevEval = state.evals[state.evals.length - 1] ?? 0;
     let evalPawns;
-    if (mate != null) {
-      const cpWhiteMate = (whiteTurn ? 1 : -1) * (mate > 0 ? 10000 : -10000);
+    if (chosenMate != null) {
+      const cpWhiteMate = (whiteTurn ? 1 : -1) * (chosenMate > 0 ? 10000 : -10000);
       evalPawns = cpWhiteMate / 100;
     } else {
-      const cpWhite = whiteTurn ? cp : -cp;
+      const cpWhite = whiteTurn ? chosenCp : -chosenCp;
       evalPawns = cpWhite / 100;
     }
     state.evals.push(evalPawns);
@@ -194,16 +317,48 @@ async function tick(state) {
     });
     if (commentary) log(state, commentary, "dim");
 
-    emit({ type: "move", move: result, myTurn: isManagerPlayersMove });
+    if (blundered) {
+      const who = isManagerPlayersMove ? "Dein Spieler" : "Der Gegner";
+      const severityLabel = bl.severity >= 0.7 ? "patzt grob!"
+        : bl.severity >= 0.35 ? "macht einen Fehler."
+        : "greift ungenau.";
+      const annotated = annotateBlunderSan(result.san, bl.severity);
+      log(state,
+        `${who} ${severityLabel} (${annotated}, P=${Math.round(bl.chance * 100)}%)`,
+        isManagerPlayersMove ? "bad" : "ok");
+    }
+
+    emit({
+      type: "move",
+      move: result,
+      myTurn: isManagerPlayersMove,
+      blunder: blundered,
+      blunderSide: blundered ? moverSide : null,
+      blunderSeverity: blundered ? bl.severity : 0,
+    });
     saveState(state);
+
+    // Zeitueberschreitung pruefen: Uhr auf 0 -> Niederlage fuer diese Seite.
+    if (flagged(state)) {
+      const whiteFlagged = state.whiteClockMs <= 0;
+      const managerLost = whiteFlagged === state.managerIsWhite;
+      finishMatch(state, {
+        outcome: managerLost ? "loss" : "win",
+        reason: `Zeit abgelaufen — ${whiteFlagged ? "Weiß" : "Schwarz"} faellt durch Zeit.`,
+      });
+      return;
+    }
 
     if (chess.isGameOver()) {
       finalizeByBoard(state);
       return;
     }
 
-    const delay = CONFIG.speedIntervalsMs[state.speed] ?? 800;
-    scheduleTick(state, Math.max(30, delay));
+    // Restliche Wandzeit zwischen Zuegen warten, damit sich das Match atmend
+    // anfuehlt (aber nie weniger als 30 ms, um den Tick nicht zu starven).
+    const engineElapsed = performance.now() - startWall;
+    const remainingWall = factor > 0 ? Math.max(0, wallTotalMs - engineElapsed) : 0;
+    scheduleTick(state, Math.max(30, Math.round(remainingWall)));
   } catch (err) {
     console.error(err);
     log(state, "Fehler in Engine-Kommunikation.", "bad");
@@ -279,3 +434,55 @@ export async function offerDraw(state) {
 
 export function getBoardState() { return chess ? chess.board() : null; }
 export function getChess() { return chess; }
+
+// Cheat-Move: Figur von beliebigem Feld auf beliebiges Feld, ohne Regelpruefung.
+// chess.js kennt put/remove als Editor-APIs, also bauen wir die Position um und
+// ueberlassen der Engine die naechste Analyse aus der neuen FEN.
+export function applyCheatMove(state, fromSq, toSq) {
+  if (!chess) return { ok: false, reason: "kein laufendes Spiel" };
+  if (!state.cheatMode?.active) return { ok: false, reason: "Cheat-Modus nicht aktiv" };
+  if (!fromSq || !toSq || fromSq === toSq) return { ok: false, reason: "Ziel waehlen" };
+
+  const piece = chess.get(fromSq);
+  if (!piece) return { ok: false, reason: "keine Figur auf Startfeld" };
+
+  // Rueckgaengig-Snapshot: chess.js akzeptiert keine zwei Koenige derselben
+  // Farbe. Falls put() scheitert, stellen wir die Ausgangsstellung wieder her.
+  const targetBefore = chess.get(toSq);
+  chess.remove(fromSq);
+  if (targetBefore) chess.remove(toSq);
+  const put = chess.put(piece, toSq);
+  if (!put) {
+    chess.put(piece, fromSq);
+    if (targetBefore) chess.put(targetBefore, toSq);
+    return { ok: false, reason: "Stellung nicht darstellbar" };
+  }
+
+  state.fen = chess.fen();
+  state.lastMove = {
+    from: fromSq, to: toSq, san: "(cheat)", color: piece.color,
+    captured: targetBefore ? targetBefore.type : null, cheat: true,
+  };
+  state.cheatMode = { active: false, selectedSq: null };
+  log(state, `Heimliche Manipulation: ${fromSq} -> ${toSq}.`, "bad");
+  emit({
+    type: "move",
+    move: { from: fromSq, to: toSq, san: "(cheat)", color: piece.color },
+    myTurn: true, cheat: true,
+  });
+  saveState(state);
+  return { ok: true };
+}
+
+export function cancelCheatMove(state) {
+  if (!state.cheatMode?.active) return;
+  state.cheatMode = { active: false, selectedSq: null };
+  emit({ type: "cheat-cancel" });
+  saveState(state);
+}
+
+export function setCheatSelection(state, sq) {
+  if (!state.cheatMode?.active) return;
+  state.cheatMode.selectedSq = sq;
+  emit({ type: "cheat-select", sq });
+}
